@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RIA — Chat</title>
+<style>
+  :root{--bg:#fff7fa;--card:#fff;--ink:#2a1f27;--mute:#8a7683;--pink:#e84a86;--me:#ffe3ee;--line:#f0dbe4}
+  @media (prefers-color-scheme:dark){:root{--bg:#1a1217;--card:#241a20;--ink:#f6e9f0;--mute:#a28e9a;--pink:#ff6fa3;--me:#4a2236;--line:#3a2a33}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+  header h1{font-size:18px;margin:0;color:var(--pink)}
+  header .sp{flex:1}
+  button{font:inherit;border:0;border-radius:10px;padding:8px 14px;background:var(--pink);color:#fff;cursor:pointer}
+  button.ghost{background:transparent;color:var(--mute);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:default}
+  #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+  .b{max-width:min(80%,560px);padding:9px 13px;border-radius:16px;white-space:pre-wrap;word-wrap:break-word}
+  .ria{background:var(--card);border:1px solid var(--line);align-self:flex-start}
+  .me{background:var(--me);align-self:flex-end}
+  .sys{align-self:center;color:var(--mute);font-size:13px}
+  form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);background:var(--card)}
+  input{flex:1;font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+  #login{margin:auto;max-width:360px;padding:24px;text-align:center}
+  #login input{width:100%;margin:12px 0;text-align:center;letter-spacing:.2em;text-transform:uppercase}
+  .hide{display:none!important}
+  #mem{padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);font-size:14px}
+  #mem li{margin:4px 0}
+  #mem button{padding:2px 8px;font-size:12px;margin-left:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>RIA 💗</h1><span class="sp"></span>
+  <button class="ghost hide" id="memBtn">Memories</button>
+  <button class="ghost hide" id="resetBtn">Reset</button>
+  <button class="ghost hide" id="outBtn">Logout</button>
+</header>
+
+<div id="login">
+  <h2>Hieee! 👋</h2>
+  <p>Web chat ke liye Telegram par RIA ko <b>/link</b> bhejo, aur jo code mile wo yahan daalo.<br>
+  Wahi chat history aur memories yahan bhi milengi.</p>
+  <input id="code" maxlength="12" placeholder="CODE" autocomplete="off">
+  <button id="loginBtn">Start chatting</button>
+  <p id="lerr" style="color:#d33"></p>
+  <p style="color:var(--mute);font-size:13px">RIA ek AI hai, insaan nahi. Tumhara data sirf RIA ke private server par rehta hai.</p>
+</div>
+
+<div id="mem" class="hide"></div>
+<div id="log" class="hide"></div>
+<form id="f" class="hide"><input id="msg" maxlength="2000" placeholder="Kuch likho…" autocomplete="off"><button id="send">Send</button></form>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = async (m, p, body) => {
+  const r = await fetch(p, {method: m, headers: body ? {'Content-Type':'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+  let d = {}; try { d = await r.json(); } catch {}
+  return {status: r.status, data: d};
+};
+function bubble(role, text){
+  const d = document.createElement('div');
+  d.className = 'b ' + (role === 'user' ? 'me' : role === 'sys' ? 'sys' : 'ria');
+  d.textContent = text;                 // textContent only: never innerHTML
+  $('log').appendChild(d); $('log').scrollTop = 1e9; return d;
+}
+function show(loggedIn){
+  for (const id of ['log','f','memBtn','resetBtn','outBtn']) $(id).classList.toggle('hide', !loggedIn);
+  $('login').classList.toggle('hide', loggedIn);
+  if (!loggedIn) $('mem').classList.add('hide');
+}
+async function loadHistory(){
+  const {status, data} = await api('GET', '/api/history');
+  if (status === 401) return show(false);
+  show(true); $('log').textContent = '';
+  (data.messages || []).forEach(m => bubble(m.role, m.content));
+  if (!(data.messages || []).length) bubble('sys', 'Naya chat — kuch bhi bolo 😊');
+}
+$('loginBtn').onclick = async () => {
+  $('lerr').textContent = '';
+  const {status, data} = await api('POST', '/api/login', {code: $('code').value});
+  if (status === 200) { $('code').value = ''; loadHistory(); } else $('lerr').textContent = data.detail || 'Login nahi hua';
+};
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginBtn').click(); });
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  const t = $('msg').value.trim(); if (!t) return;
+  $('msg').value = ''; $('send').disabled = true;
+  bubble('user', t); const wait = bubble('ria', '…');
+  const {status, data} = await api('POST', '/api/chat', {message: t});
+  if (status === 401) { wait.remove(); show(false); }
+  else wait.textContent = data.reply || data.detail || 'Kuch gadbad ho gayi, phir try karo.';
+  $('send').disabled = false; $('msg').focus();
+};
+$('outBtn').onclick = async () => { await api('POST', '/api/logout'); show(false); };
+$('resetBtn').onclick = async () => { if (confirm('Current chat clear karein? (Memories safe rahengi)')) { await api('POST', '/api/reset'); loadHistory(); } };
+$('memBtn').onclick = async () => {
+  const box = $('mem');
+  if (!box.classList.toggle('hide')) {
+    const {data} = await api('GET', '/api/memory');
+    box.textContent = '';
+    const ul = document.createElement('ul');
+    (data.memories || []).forEach(m => {
+      const li = document.createElement('li'); li.textContent = m.text;
+      const b = document.createElement('button'); b.className = 'ghost'; b.textContent = 'delete';
+      b.onclick = async () => { await api('DELETE', '/api/memory/' + encodeURIComponent(m.id)); li.remove(); };
+      li.appendChild(b); ul.appendChild(li);
+    });
+    box.appendChild(ul.children.length ? ul : document.createTextNode('Abhi kuch yaad nahi hai.'));
+  }
+};
+loadHistory();
+</script>
+</body>
+</html>
