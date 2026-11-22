@@ -289,5 +289,43 @@ To iterate: edit the text → `sudo systemctl restart ria` → test in `/admin` 
 Gemma 3 4B follows short, concrete examples best — add 3–5 more example exchanges in your preferred style rather than long rules.
 RIA is a *fictional AI persona*: she's told never to claim a body, real-life experiences or human feelings, and to admit she's an AI when asked.
 
+## 13. v2 — Ria's personality, groups, stickers, owner panel
+
+**Personality.** Ria is a 19-year-old Delhi college girl: very short Gen-Z Hinglish (3–12 words), feminine grammar, 0–2 fitting emojis,
+light flirty/teasing within limits (no abuse, no sexual talk — she deflects playfully, e.g. "hehe itni jaldi? pehle dost toh ban jao 😏"),
+no flirting if someone says they're under 18. She never brings up AI/bot/tech on her own: every reply is filtered (stage directions like "(giggles)" removed,
+masculine verbs fixed, replies trimmed, "AI/digital/virtual" talk retried once then stripped). Tech questions ("kaun sa API?") get a playful "mujhe tech samajh nahi aata".
+**One deliberate exception:** if someone *sincerely asks* "tum AI ho / real ho?", she answers truthfully in one short line in her voice and carries on —
+she is never made to claim she is a human. (Everything else stays in character.)
+
+**Groups.** In a group Ria answers only when someone says "Ria", @tags her, or replies to her message, and she replies *as a reply* to that message.
+Group chats keep their own shared conversation (no personal memories are used in groups). **BotFather → /mybots → your bot → Bot Settings → Group Privacy → Turn OFF**
+(otherwise Telegram only shows her tagged/command messages, so "Ria" alone won't trigger). After changing it, remove and re-add the bot in existing groups.
+
+**Stickers.** Ria sometimes (owner-set chance, default 15%, never twice in a row) follows a reply with a sticker from the library — matching the emoji in her reply when possible.
+The library starts **empty**: add stickers/packs from the owner panel (below).
+
+**Owner panel.** Send `/owner` (or `/panel`) to the bot in a private chat. Only numeric ids in `ADMIN_USER_IDS` / `OWNER_USER_IDS` can open it
+(usernames are never trusted: they can change). Buttons: 📊 Stats · ⚙️ Controls (bot on/off, DM replies, group replies, stickers on/off, sticker chance — saved in MongoDB, instant) ·
+📣 Broadcast (DMs / Groups / Both, preview + confirm + Stop button, throttled, auto-skips blocked users) · ✉️ DM a user (id or @username) · 👥 Message a group ·
+🎭 Stickers (add sticker, add whole pack, remove sticker, remove pack, list) · 🚫 Ban/Unban · 🗂 Groups (enable/disable Ria per group).
+To add stickers: Stickers → *Add pack* → send any sticker from that pack. `/cancel` aborts any pending step.
+You need AAKASH's **numeric** Telegram id (from @userinfobot) in `ADMIN_USER_IDS` or `OWNER_USER_IDS` — `@Advik_prakashh` is shown in the panel header but is not used for authorisation.
+
+**Speed.** Defaults are now `AI_MAX_TOKENS=60`, `AI_CONTEXT_LENGTH=2048`, `HISTORY_MESSAGES=8`, `AI_TEMPERATURE=0.8` (shorter prompt + shorter answers = faster on CPU).
+If your VPS `.env` already exists, those old values stay until you change them:
+
+```bash
+cd /opt/ria
+sudo sed -i 's/^AI_MAX_TOKENS=.*/AI_MAX_TOKENS=60/; s/^AI_CONTEXT_LENGTH=.*/AI_CONTEXT_LENGTH=2048/; s/^AI_TEMPERATURE=.*/AI_TEMPERATURE=0.8/; s/^HISTORY_MESSAGES=.*/HISTORY_MESSAGES=8/; s/^HISTORY_CHAR_BUDGET=.*/HISTORY_CHAR_BUDGET=3000/' .env
+grep -q '^OWNER_NAME=' .env || printf '\nOWNER_USER_IDS=\nOWNER_NAME=AAKASH\nOWNER_USERNAME=Advik_prakashh\nGROUP_RATE_LIMIT_MESSAGES=12\n' | sudo tee -a .env >/dev/null
+sudo chown root:ria .env && sudo chmod 640 .env
+git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate
+sudo systemctl restart ria && sudo systemctl status ria --no-pager
+```
+
+**About a Hugging Face token already in `.env`.** RIA's VPS `.env` has no HF token: its only HF lines are the blank `HF_REPLICA_*` ones (replica off), and unknown lines are ignored.
+Check with `grep -n HF /opt/ria/.env`. A Hugging Face *write* token belongs only in GitHub → Secrets → `HF_TOKEN` (for the Space deploy), never in the VPS `.env` or in chats; if you don't recognise it, delete that line (and revoke the token at huggingface.co/settings/tokens if you're unsure where it came from).
+
 ## License
 MIT (see `LICENSE`).
