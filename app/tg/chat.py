@@ -1,42 +1,77 @@
-"""Normal text-message handler."""
+"""Text messages: DMs always; groups only when someone says "Ria", @tags the bot, or replies to Ria."""
 from __future__ import annotations
 
 import logging
 
-from telegram import Update
+from telegram import ReplyParameters, Update
 from telegram.ext import ContextTypes
 
 from app.services.limiter import SlidingWindowLimiter
+from app.services.triggers import should_respond_in_group, strip_mention
+from app.tg.stickers import maybe_send_sticker
 from app.tg.utils import safe_reply, typing_indicator
 
 log = logging.getLogger(__name__)
 _warn = SlidingWindowLimiter(1, 30)
 
-MSG_SLOW_DOWN = "Arey thoda dheere dheere 😅 Itni jaldi mein reply nahi de paungi!"
-MSG_GLOBAL_BUSY = "Abhi bahut log baat kar rahe hain 🥺 Thodi der baad aana!"
+MSG_SLOW_DOWN = "arre thoda dheere yaar 😅 itni jaldi nahi"
+MSG_GLOBAL_BUSY = "abhi bahut log baat kar rahe hain 🥺 thodi der baad aana"
+MSG_PAUSED = "ria thodi der ke liye break pe hai 😴"
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = context.application.bot_data["ctx"]
-    msg, user = update.message, update.effective_user
-    if msg is None or user is None or not msg.text:
+    msg, user, chat = update.message, update.effective_user, update.effective_chat
+    if msg is None or user is None or chat is None or not msg.text or user.is_bot:
         return
+    if ctx.dedupe.seen(update.update_id):  # Telegram may redeliver after restarts/network errors
+        return
+    is_group = chat.type in ("group", "supergroup")
+    rt = await ctx.runtime.all()
+    text = msg.text
+    reply_kwargs: dict = {}
 
-    # Duplicate update protection (Telegram can redeliver after restarts/network errors).
-    if ctx.dedupe.seen(update.update_id):
-        return
+    if is_group:
+        await ctx.chats.touch(chat.id, chat.type, chat.title or "")
+        bot_username = context.bot.username or ""
+        rb = msg.reply_to_message
+        replied_to_bot = bool(rb and rb.from_user and rb.from_user.id == context.bot.id)
+        if not should_respond_in_group(text, bot_username, replied_to_bot):
+            return
+        if not rt["bot_enabled"] or not rt["group_enabled"] or user.id in ctx.banned:
+            return
+        chat_doc = await ctx.chats.get(chat.id)
+        if chat_doc and chat_doc.get("enabled") is False:
+            return
+        if not ctx.chat_limiter.allow(chat.id):
+            return
+        text = strip_mention(text, bot_username) or "hi"
+        reply_kwargs["reply_parameters"] = ReplyParameters(message_id=msg.message_id, allow_sending_without_reply=True)
+    else:
+        if user.id in ctx.banned:
+            return
+        if not rt["bot_enabled"] or not rt["dm_enabled"]:
+            if _warn.allow(("paused", user.id)):
+                await safe_reply(msg, MSG_PAUSED)
+            return
 
     if not ctx.user_limiter.allow(user.id):
-        if _warn.allow(user.id):  # at most one "slow down" notice per 30s per user
+        if not is_group and _warn.allow(user.id):  # at most one "slow down" notice per 30s per user
             await safe_reply(msg, MSG_SLOW_DOWN)
         return
     if not ctx.global_limiter.allow("global"):
-        await safe_reply(msg, MSG_GLOBAL_BUSY)
+        if not is_group:
+            await safe_reply(msg, MSG_GLOBAL_BUSY)
         return
 
     if ctx.settings.log_message_content:
-        log.debug("msg user=%s text=%r", user.id, msg.text[:80])
+        log.debug("msg user=%s text=%r", user.id, text[:80])
 
-    async with typing_indicator(context.bot, msg.chat_id):
-        reply = await ctx.engine.chat(user.id, msg.text, "telegram", user.first_name or "", user.username or "")
-    await safe_reply(msg, reply.text)
+    async with typing_indicator(context.bot, chat.id):
+        reply = await ctx.engine.chat(
+            user.id, text, "telegram", user.first_name or "", user.username or "",
+            scope=chat.id if is_group else None, group=is_group,
+        )
+    await safe_reply(msg, reply.text, **reply_kwargs)
+    if reply.status == "ok":
+        await maybe_send_sticker(ctx, context.bot, chat.id, reply.text, msg.message_id if is_group else None)
