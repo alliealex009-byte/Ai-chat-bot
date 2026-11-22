@@ -26,7 +26,8 @@ class UserRepo:
                     "message_count": 0,
                     "msgs_since_extract": 0,
                 },
-                "$set": {"first_name": (first_name or "")[:64], "username": (username or "")[:64], "last_seen": now},
+                "$set": {"first_name": (first_name or "")[:64], "username": (username or "")[:64],
+                         "username_lc": (username or "").lower()[:64], "last_seen": now},
             },
             upsert=True,
         )
@@ -60,3 +61,20 @@ class UserRepo:
 
     async def count(self) -> int:
         return await self.col.count_documents({})
+
+    # -- owner controls ------------------------------------------------------
+    async def set_banned(self, user_id: int, banned: bool) -> None:
+        await self.col.update_one({"_id": user_id}, {"$set": {"banned": banned}}, upsert=True)
+
+    async def list_banned(self) -> list[int]:
+        return [d["_id"] for d in await self.col.find({"banned": True}).to_list(length=5000)]
+
+    async def set_blocked(self, user_id: int, blocked: bool) -> None:
+        await self.col.update_one({"_id": user_id}, {"$set": {"blocked": blocked}})
+
+    async def broadcast_ids(self) -> list[int]:
+        docs = await self.col.find({"blocked": {"$ne": True}, "banned": {"$ne": True}}).to_list(length=100000)
+        return [d["_id"] for d in docs if isinstance(d["_id"], int) and d["_id"] > 0]
+
+    async def find_by_username(self, username: str) -> Optional[dict]:
+        return await self.col.find_one({"username_lc": username.lstrip("@").lower()})
