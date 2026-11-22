@@ -1,0 +1,20 @@
+# OPTIONAL / EXPERIMENTAL: Space that ALSO runs Ollama + gemma3:4b as a secondary inference replica.
+# To use: rename this file to "Dockerfile" in the Space repo, set Space variable ENABLE_REPLICA=true and
+# secret REPLICA_TOKEN. gemma3:4b needs ~4 GB RAM; CPU Basic (2 vCPU/16 GB) will be slow. Disabled by default.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_MODELS=/tmp/ollama
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates zstd && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://ollama.com/install.sh | sh
+RUN useradd -m -u 1000 user && mkdir -p /tmp/ollama && chown user /tmp/ollama
+USER user
+ENV HOME=/home/user PATH=/home/user/.local/bin:$PATH
+WORKDIR $HOME/app
+
+COPY --chown=user requirements.txt .
+RUN pip install --user -r requirements.txt
+COPY --chown=user app.py start_replica.sh ./
+COPY --chown=user static ./static
+RUN chmod +x start_replica.sh
+EXPOSE 7860
+CMD ["./start_replica.sh"]
