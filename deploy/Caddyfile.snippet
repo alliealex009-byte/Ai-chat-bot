@@ -1,0 +1,32 @@
+# Use this instead of nginx.conf if your existing Caddy (tg-game-caddy-1) already owns ports 80/443.
+# Caddy gets HTTPS certificates automatically.
+#
+# 1. DNS: A record  ria-api.example.com -> your VPS IP
+# 2. Add the block below to the Caddyfile that tg-game-caddy-1 uses (back it up first!).
+# 3. If Caddy runs in Docker, it cannot reach 127.0.0.1 of the host. Use the docker host gateway:
+#       reverse_proxy host.docker.internal:8000
+#    (the container needs `extra_hosts: ["host.docker.internal:host-gateway"]`), and then set
+#    API_HOST=0.0.0.0 ONLY IF you also firewall port 8000 from the internet (ufw deny 8000).
+#    Safer alternative: run a small separate nginx/caddy just for RIA on another port.
+# 4. Reload:  docker exec tg-game-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+#
+# Do not change anything else in that file: it serves your other projects.
+
+ria-api.example.com {
+    encode gzip
+    @api path /api/v1/*
+    handle @api {
+        request_body {
+            max_size 16KB
+        }
+        reverse_proxy 127.0.0.1:8000 {
+            header_up X-Real-IP {remote_host}
+            transport http {
+                response_header_timeout 180s
+            }
+        }
+    }
+    handle {
+        respond 404
+    }
+}
