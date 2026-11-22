@@ -90,3 +90,79 @@ def parse_memory_json(raw: str) -> list[str]:
             if 3 <= len(item) and not is_sensitive(item):
                 out.append(item)
     return out[:5]
+
+
+# ---------------------------------------------------------------------------------------------
+# Reply polishing: keep Ria short, female-voiced, emoji-light and free of "AI-talk" / stage directions
+# ---------------------------------------------------------------------------------------------
+import random  # noqa: E402
+
+_STAGE_RE = re.compile(r"\([^)\n]{1,40}\)|\*[^*\n]{1,40}\*|\[[^\]\n]{1,40}\]")
+_EMOJI_CLASS = "[\U0001F300-\U0001FAFF☀-➿\U0001F000-\U0001F2FF⭐⬆❤]"
+_EMOJI_RE = re.compile(_EMOJI_CLASS + "[️‍]*")
+_AI_WORDS = re.compile(
+    r"\b(a\.?i\.?|artificial|chat\s?bot|bot|robot|language model|llm|assistant|digital|virtual|gemma|google|"
+    r"algorithm|programmed|program|openai|chatgpt)\b",
+    re.IGNORECASE,
+)
+_FEMININE = [
+    (r"\bsakta (hoon|hu|hun)\b", "sakti hu"), (r"\brah[ae] (hoon|hu|hun)\b", "rahi hu"),
+    (r"\bkarta (hoon|hu|hun)\b", "karti hu"), (r"\bgaya (hoon|hu|hun)\b", "gayi hu"),
+    (r"\bchahta (hoon|hu|hun)\b", "chahti hu"), (r"\bsamajhta (hoon|hu|hun)\b", "samajhti hu"),
+    (r"\bjaanta (hoon|hu|hun)\b", "jaanti hu"), (r"\bkhata (hoon|hu|hun)\b", "khati hu"),
+    (r"\bsakta\b", "sakti"), (r"\bhoon\b", "hu"), (r"\bhun\b", "hu"),
+]
+_FEM_RE = [(re.compile(p, re.IGNORECASE), r) for p, r in _FEMININE]
+_FALLBACKS = ["hehe 😄", "acha? aur batao 👀", "haan yaar 😌", "arre waah 😂", "hmm sahi hai 😌"]
+
+
+def mentions_ai(text: str) -> bool:
+    return bool(_AI_WORDS.search(text or ""))
+
+
+def strip_ai_sentences(text: str) -> str:
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text.strip())
+    kept = [p for p in parts if p and not mentions_ai(p)]
+    return " ".join(kept).strip()
+
+
+def extract_emojis(text: str) -> list[str]:
+    return [m.group(0).replace("️", "") for m in _EMOJI_RE.finditer(text or "")]
+
+
+def _limit_emojis(text: str, keep: int) -> str:
+    count = 0
+
+    def sub(m: "re.Match") -> str:
+        nonlocal count
+        count += 1
+        return m.group(0) if count <= keep else ""
+
+    return _EMOJI_RE.sub(sub, text)
+
+
+def _trim_short(text: str, max_sentences: int = 2, max_chars: int = 220) -> str:
+    text = " ".join(text.split())
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    out = " ".join(parts[:max_sentences])
+    if len(out) > max_chars:
+        cut = out[:max_chars]
+        out = cut[: cut.rfind(" ")] if " " in cut else cut
+    return out.strip()
+
+
+def polish_reply(text: str, long_form: bool = False, group: bool = False) -> str:
+    """Make a model reply look like Ria texting: no stage directions, feminine grammar, few emojis, short."""
+    text = _STAGE_RE.sub("", text or "")
+    for rx, repl in _FEM_RE:
+        text = rx.sub(repl, text)
+    text = _limit_emojis(text, 3 if long_form else 2)
+    if long_form:
+        text = re.sub(r"[ \t]+", " ", text).strip()
+    else:
+        text = _trim_short(text, 1 if group else 2, 140 if group else 220)
+    return text.strip()
+
+
+def fallback_line() -> str:
+    return random.choice(_FALLBACKS)
