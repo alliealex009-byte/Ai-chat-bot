@@ -20,7 +20,7 @@ def test_defaults_use_gemma_and_local_only(monkeypatch, tmp_path):
     assert s.ollama_base_url == "http://127.0.0.1:11434"
     assert s.ai_mode == "local" and not s.enable_api_fallback and not s.api_fallback_active
     assert not s.hf_replica_enabled
-    assert (s.ai_temperature, s.ai_top_p, s.ai_max_tokens, s.ai_context_length) == (0.75, 0.9, 100, 4096)
+    assert (s.ai_temperature, s.ai_top_p, s.ai_max_tokens, s.ai_context_length) == (0.8, 0.9, 60, 2048)
     assert s.mongo_db_name == "ria_database" and s.mongo_port == 27018
 
 
@@ -66,3 +66,11 @@ def test_invalid_values_rejected(monkeypatch, tmp_path):
 def test_secrets_listed_for_redaction():
     s = make_settings()
     assert s.telegram_bot_token in s.secrets() and s.api_token in s.secrets()
+
+
+def test_mongo_url_alias_is_accepted(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABCDEF_test_token_value_1234567890")
+    monkeypatch.setenv("API_TOKEN", "c" * 40)
+    monkeypatch.setenv("MONGO_URL", "mongodb://u:p@127.0.0.1:27018/?authSource=admin")
+    s = load_settings(str(tmp_path / "none.env"))
+    assert s.effective_mongo_uri == "mongodb://u:p@127.0.0.1:27018/?authSource=admin"

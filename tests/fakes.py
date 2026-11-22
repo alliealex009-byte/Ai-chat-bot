@@ -19,6 +19,8 @@ def _match(doc: dict, flt: dict) -> bool:
                     return False
                 if op == "$in" and v not in arg:
                     return False
+                if op == "$ne" and v == arg:
+                    return False
         elif v != cond:
             return False
     return True
@@ -100,6 +102,9 @@ class FakeDB:
         self.memories = FakeCollection()
         self.link_codes = FakeCollection()
         self.web_sessions = FakeCollection()
+        self.runtime = FakeCollection()
+        self.chats = FakeCollection()
+        self.stickers = FakeCollection()
 
 
 class FakeProvider:
