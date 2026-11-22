@@ -5,15 +5,33 @@ import logging
 
 from telegram import Update
 from telegram.error import Conflict, NetworkError, RetryAfter, TimedOut
-from telegram.ext import (Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler,
+from telegram.ext import (Application, ApplicationBuilder, CallbackQueryHandler, ChatMemberHandler, CommandHandler,
                           ContextTypes, MessageHandler, filters)
 
 from app.context import AppContext
-from app.tg import chat, commands, media, start
+from app.tg import chat, commands, media, owner, start
 
 log = logging.getLogger(__name__)
 
-POLL_UPDATES = ["message", "callback_query"]
+POLL_UPDATES = ["message", "callback_query", "my_chat_member"]
+
+
+async def _on_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Track where Ria is present: groups she's added to/removed from, and users who block her."""
+    ctx: AppContext = context.application.bot_data["ctx"]
+    ev = update.my_chat_member
+    if ev is None:
+        return
+    status, chat = ev.new_chat_member.status, ev.chat
+    gone = status in ("left", "kicked")
+    if chat.type == "private":
+        await ctx.users.get_or_create(chat.id, chat.first_name or "", chat.username or "")
+        await ctx.users.set_blocked(chat.id, gone)
+    elif chat.type in ("group", "supergroup"):
+        if gone:
+            await ctx.chats.set_active(chat.id, False)
+        else:
+            await ctx.chats.touch(chat.id, chat.type, chat.title or "")
 
 
 async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,8 +76,20 @@ def build_application(ctx: AppContext) -> Application:
         ("link", commands.link), ("health", commands.health),
     ]:
         app.add_handler(CommandHandler(name, fn, filters=private))
-    app.add_handler(CallbackQueryHandler(commands.on_callback))
-    app.add_handler(MessageHandler(private & filters.TEXT & ~filters.COMMAND, chat.on_text))
+    # Owner panel (numeric-id authorised). Registered before the generic handlers.
+    owner_ids = sorted(ctx.settings.owner_ids)
+    if owner_ids:
+        is_owner = filters.User(user_id=owner_ids)
+        app.add_handler(MessageHandler(private & is_owner & (filters.TEXT | filters.Sticker.ALL), owner.owner_input), group=-1)
+        for name in ("owner", "panel"):
+            app.add_handler(CommandHandler(name, owner.panel, filters=private & is_owner))
+        app.add_handler(CallbackQueryHandler(owner.owner_callback, pattern=r"^own:"))
+    else:
+        log.warning("No ADMIN_USER_IDS/OWNER_USER_IDS set: owner panel is disabled")
+    app.add_handler(CallbackQueryHandler(commands.on_callback, pattern=r"^(forget|lang|mem):"))
+    app.add_handler(ChatMemberHandler(_on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    # DMs always; groups are filtered inside on_text (only when "Ria" is said, bot is tagged, or Ria is replied to)
+    app.add_handler(MessageHandler((private | filters.ChatType.GROUPS) & filters.TEXT & ~filters.COMMAND, chat.on_text))
     app.add_handler(MessageHandler(private & ~filters.TEXT & ~filters.COMMAND & ~filters.StatusUpdate.ALL, media.on_media))
     app.add_error_handler(_on_error)
     return app

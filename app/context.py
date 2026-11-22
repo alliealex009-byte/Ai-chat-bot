@@ -8,9 +8,12 @@ from typing import Optional
 
 from app.ai.router import AIRouter
 from app.config import Settings
+from app.database.chats import ChatsRepo
 from app.database.conversations import ConversationRepo
 from app.database.memories import MemoryRepo
 from app.database.mongo import Mongo
+from app.database.runtime import RuntimeSettings
+from app.database.stickers import StickersRepo
 from app.database.users import UserRepo
 from app.database.web import WebAuthRepo
 from app.services.chat_engine import ChatEngine
@@ -34,7 +37,16 @@ class AppContext:
     user_limiter: SlidingWindowLimiter
     global_limiter: SlidingWindowLimiter
     dedupe: DedupeCache
+    runtime: RuntimeSettings
+    chats: ChatsRepo
+    stickers: StickersRepo
+    chat_limiter: SlidingWindowLimiter
     started_at: float = field(default_factory=time.time)
+    banned: set = field(default_factory=set)
+    owner_state: dict = field(default_factory=dict)      # owner_id -> pending panel action
+    owner_tasks: set = field(default_factory=set)        # running broadcast tasks
+    broadcast_cancel: Optional[asyncio.Event] = None
+    sticker_gap: dict = field(default_factory=dict)      # chat_id -> replies since last sticker
     telegram_running: bool = False
     telegram_last_error: Optional[str] = None
 
@@ -89,4 +101,6 @@ def assemble_with_db(settings: Settings, mongo: Mongo, router: AIRouter, queue: 
         user_limiter=SlidingWindowLimiter(settings.user_rate_limit_messages, settings.user_rate_limit_window_seconds),
         global_limiter=SlidingWindowLimiter(settings.global_rate_limit_messages, settings.global_rate_limit_window_seconds),
         dedupe=DedupeCache(settings.dedupe_cache_size),
+        runtime=RuntimeSettings(db), chats=ChatsRepo(db), stickers=StickersRepo(db),
+        chat_limiter=SlidingWindowLimiter(settings.group_rate_limit_messages, 60),
     )

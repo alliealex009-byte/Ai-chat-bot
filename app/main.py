@@ -44,6 +44,7 @@ async def run() -> int:
     log.info("Starting RIA (model=%s, mode=%s, concurrency=%d)", settings.ollama_model, settings.ai_mode,
              settings.max_concurrent_inference)
     ctx = await build_context(settings)  # retries MongoDB with backoff, creates indexes
+    ctx.banned = set(await ctx.users.list_banned())
     ctx.queue.start()
     ctx.router.start()
     asyncio.create_task(ctx.router.ollama.warmup())
