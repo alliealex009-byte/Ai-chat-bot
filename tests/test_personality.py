@@ -5,7 +5,7 @@ from app.personality import (FEWSHOT, asks_about_tech, build_system_prompt, is_a
 
 def test_persona_is_ria_19_delhi_gen_z_short():
     p = build_system_prompt("hinglish")
-    for must in ("Ria", "19-year-old", "Delhi", "Gen-Z", "VERY short", "3-12 words", "feminine", "yaar"):
+    for must in ("Ria", "19-year-old", "Delhi", "Gen-Z", "Short: one or two lines", "5-15 words", "girl", "yaar"):
         assert must in p, must
     assert "beta" in p and "Don't say beta or sir" in p
 
@@ -24,10 +24,11 @@ def test_persona_never_tells_her_to_claim_human():
     assert "i am a real girl" not in p and "you are a real" not in p and "say you are human" not in p
 
 
-def test_fewshot_has_kiss_deflection_and_is_short():
+def test_fewshot_teaches_style_boundaries_and_stays_short():
     texts = " ".join(m["content"] for m in FEWSHOT)
-    assert "Can we kiss" in texts and "pehle dost toh ban jao" in texts
-    assert all(len(m["content"].split()) <= 12 for m in FEWSHOT if m["role"] == "assistant")
+    assert "Kiss kro ge" in texts and "pehle dhang se baat toh karo" in texts and "Sex kro ge" in texts
+    assert "M ladka hu" in texts and "Kuch nhi" in texts          # gender + boring-reply handling are taught
+    assert all(len(m["content"].split()) <= 14 for m in FEWSHOT if m["role"] == "assistant")
     assert not mentions_ai(texts)
 
 
@@ -102,3 +103,50 @@ def test_sensitive_detection_and_memory_json():
     raw = 'Sure! ["Likes cricket", "Phone is 9876543210", "Has a dog named Tommy"]'
     assert parse_memory_json(raw) == ["Likes cricket", "Has a dog named Tommy"]
     assert parse_memory_json("not json") == [] and parse_memory_json("[1, 2]") == []
+
+
+def test_gender_detection_only_when_user_says_it():
+    from app.personality import detect_gender, gender_hint
+    for t in ("M ladka hu", "main ladka hu", "i am a boy", "mai launda hu", "I'm male", "ladka hu yaar"):
+        assert detect_gender(t) == "male", t
+    for t in ("main ladki hu", "i am a girl", "m girl hu", "ladki hu"):
+        assert detect_gender(t) == "female", t
+    for t in ("Hi", "wo ladka kaun hai", "m ladka nhi hu", "tum ladki ho?", "boys are cool", "ladki hai wo"):
+        assert detect_gender(t) is None, t
+    assert "BOY" in gender_hint("male") and "GIRL" in gender_hint("female") and "unknown" in gender_hint(None)
+
+
+def test_prompt_grammar_rules_prevent_you_vs_user_mixups():
+    p = build_system_prompt()
+    assert "NEVER" in p and "kya kar rahi hu tum" in p and "tum kya kar rahe ho" in p
+    assert "nhi=nahi" in p and "kya matlab? clear batao na" in p and "boring replies" in p
+    assert "80% of your words must be Hindi" in p and "NEVER write a full English sentence" in p
+
+
+def test_looks_english_flags_english_but_not_hinglish():
+    from app.ai.prompts import looks_english
+    assert looks_english("Okayyyy chill! Seriously though what's up with you")
+    assert looks_english("Lol. You're so predictable")
+    for ok in ("arre aise kaise kuch nhi? 😏 bolo na", "haha pagal ho kya? itni jaldi?", "hieee", "lol ok", "mast hai yaar"):
+        assert not looks_english(ok), ok
+
+
+def test_short_reply_keeps_trailing_emoji():
+    assert polish_reply("Hieee! 💗", group=True) == "Hieee! 💗"
+    assert polish_reply("arre waah! 😂 aur batao. sunao kuch", group=False) == "arre waah! 😂 aur batao."
+
+
+def test_detect_name_only_on_clear_statements():
+    from app.personality import detect_name
+    assert detect_name("Mera naam Rohan hai") == "Rohan"
+    assert detect_name("my name is priya") == "Priya"
+    assert detect_name("mujhe Rohan bulao") == "Rohan"
+    assert detect_name("mera naam kya hai") is None
+    assert detect_name("mujhe neend aa rhi h") is None
+    assert detect_name("hello") is None
+
+
+def test_summary_goes_into_prompt_for_dm_only():
+    from app.personality import build_system_prompt
+    assert "maths exam" in build_system_prompt(summary="Has a maths exam.")
+    assert "maths exam" not in build_system_prompt(summary="Has a maths exam.", group=True)

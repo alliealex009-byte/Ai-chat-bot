@@ -202,7 +202,7 @@ async def test_dm_paused_when_bot_disabled_and_stickers_follow_replies(stack):
 # ---------------------------------------------------------------- owner panel
 async def test_owner_panel_is_owner_only(stack):
     from app.tg import owner
-    stack.settings.admin_user_ids.append(42)
+    stack.settings.owner_user_ids.append(42)
     m = Msg(); await owner.panel(_upd(1000, m), _ctx(stack)); assert m.replies == []          # stranger: ignored
     m = Msg(); await owner.panel(_upd(42, m), _ctx(stack))
     assert "Ria owner panel" in m.replies[0] and "AAKASH" in m.replies[0] and "Advik_prakashh" in m.replies[0]
@@ -217,10 +217,10 @@ async def test_owner_panel_is_owner_only(stack):
 async def test_owner_controls_toggle_and_ban_flow(stack):
     from telegram.ext import ApplicationHandlerStop
     from app.tg import owner
-    stack.settings.admin_user_ids.append(42)
+    stack.settings.owner_user_ids.append(42)
     stack.ctx.runtime.ttl = 0
     u = _upd(42, None, data="own:tg:stickers_enabled"); await owner.owner_callback(u, _ctx(stack))
-    assert (await stack.ctx.runtime.all())["stickers_enabled"] is False and "Stickers: OFF" in u.callback_query.edits[0]
+    assert (await stack.ctx.runtime.all())["stickers_enabled"] is False and "Controls" in u.callback_query.edits[0]
     u = _upd(42, None, data="own:ban"); await owner.owner_callback(u, _ctx(stack))
     assert stack.ctx.owner_state[42]["action"] == "ban_who"
     await stack.ctx.users.get_or_create(900, "Bad", "baduser")
@@ -237,7 +237,7 @@ async def test_owner_broadcast_flow_sends_to_dm_users_only(stack):
     from telegram.ext import ApplicationHandlerStop
     from app.tg import owner
     import asyncio
-    stack.settings.admin_user_ids.append(42)
+    stack.settings.owner_user_ids.append(42)
     for uid in (1, 2):
         await stack.ctx.users.get_or_create(uid, "n", f"u{uid}")
     await stack.ctx.chats.touch(-55, "supergroup", "G")
@@ -258,7 +258,7 @@ async def test_owner_broadcast_flow_sends_to_dm_users_only(stack):
 async def test_owner_sticker_manager_add_and_remove_pack(stack):
     from telegram.ext import ApplicationHandlerStop
     from app.tg import owner
-    stack.settings.admin_user_ids.append(42)
+    stack.settings.owner_user_ids.append(42)
     pack = SimpleNamespace(name="CutePack", stickers=[
         SimpleNamespace(file_unique_id=f"u{i}", file_id=f"f{i}", emoji="😂") for i in range(3)])
     async def get_sticker_set(name): return pack
@@ -273,3 +273,91 @@ async def test_owner_sticker_manager_add_and_remove_pack(stack):
     with pytest.raises(ApplicationHandlerStop):
         await owner.owner_input(_upd(42, m), c)
     assert await stack.ctx.stickers.count() == 0
+
+
+async def test_start_buttons_and_owner_button_visibility(stack):
+    stack.settings.admin_user_ids.append(5)
+    stack.settings.owner_user_ids.append(42)
+
+    def labels(markup):
+        return [b.text for row in markup.inline_keyboard for b in row]
+
+    m = Msg(); await start.start(_upd(1, m), _ctx(stack))
+    ls = labels(m.reply_kwargs[0]["reply_markup"])
+    assert "🍀 Ria features" in ls and "👥 Groups" in ls and "💸 Promoter" in ls and "🎮 Games" in ls
+    assert "👑 Owner panel" not in ls                                  # stranger
+    m = Msg(); await start.start(_upd(5, m), _ctx(stack))
+    assert "👑 Owner panel" not in labels(m.reply_kwargs[0]["reply_markup"])   # admin: no owner panel
+    m = Msg(); await start.start(_upd(42, m), _ctx(stack))
+    assert "👑 Owner panel" in labels(m.reply_kwargs[0]["reply_markup"])       # owner
+    assert "Messages:" in m.replies[0] and "Memories:" in m.replies[0]
+
+
+async def test_admin_cannot_open_owner_panel(stack):
+    assert 5 not in stack.settings.owner_ids
+    stack.settings.admin_user_ids.append(5)
+    assert 5 not in stack.settings.owner_ids
+
+
+async def test_start_callbacks_navigate(stack):
+    u = _upd(1, None, data="st:features"); await start.start_callback(u, _ctx(stack))
+    assert "Ria kya kya" in u.callback_query.edits[0]
+    u = _upd(1, None, data="st:back"); await start.start_callback(u, _ctx(stack))
+    assert "Messages:" in u.callback_query.edits[0]
+
+
+# ---------------------------------------------------------------- secretary mode (Telegram Business)
+class _BizBot:
+    def __init__(self):
+        self.sent, self.read = [], []
+
+    async def send_message(self, **kw): self.sent.append(kw)
+    async def send_chat_action(self, **kw): pass
+    async def read_business_message(self, **kw): self.read.append(kw)
+
+
+def _biz_update(sender_id, text, cid="c1", uid_update=1):
+    m = SimpleNamespace(text=text, business_connection_id=cid, chat=SimpleNamespace(id=sender_id),
+                        from_user=SimpleNamespace(id=sender_id, first_name="Riya", username="r", is_bot=False),
+                        message_id=5)
+    return SimpleNamespace(business_message=m, update_id=uid_update)
+
+
+async def _run_biz(stack, upd, bot):
+    from telegram.ext import ApplicationHandlerStop
+    from app.tg import business
+    ctx = SimpleNamespace(application=SimpleNamespace(bot_data={"ctx": stack.ctx}), bot=bot)
+    with pytest.raises(ApplicationHandlerStop):
+        await business.on_business_message(upd, ctx)
+
+
+async def test_secretary_replies_in_business_chat_and_marks_read(stack):
+    stack.queue.start()
+    await stack.ctx.business.upsert("c1", 900, "Aakash", True, True)
+    bot = _BizBot()
+    await _run_biz(stack, _biz_update(55, "hi kaha ho"), bot)
+    assert len(bot.sent) == 1 and bot.sent[0]["business_connection_id"] == "c1" and bot.sent[0]["chat_id"] == 55
+    assert bot.read and "SECRETARY MODE" in stack.local.calls[0][0]["content"]
+    await stack.queue.shutdown(1)
+
+
+async def test_secretary_respects_switches_owner_takeover_and_permissions(stack):
+    stack.queue.start()
+    stack.ctx.runtime.ttl = 0
+    await stack.ctx.business.upsert("c1", 900, "Aakash", True, True)
+    bot = _BizBot()
+    await _run_biz(stack, _biz_update(900, "main khud reply kar raha hu", uid_update=2), bot)   # owner writes
+    await _run_biz(stack, _biz_update(900, "hello", uid_update=3), bot)
+    assert bot.sent == []
+    stack.ctx.secretary_pause.clear()
+    await stack.ctx.runtime.set("secretary_enabled", False)
+    await _run_biz(stack, _biz_update(55, "hi", uid_update=4), bot)
+    assert bot.sent == []
+    await stack.ctx.runtime.set("secretary_enabled", True)
+    await stack.ctx.business.upsert("c1", 900, "Aakash", False, True)                          # no reply permission
+    await _run_biz(stack, _biz_update(55, "hi", uid_update=5), bot)
+    assert bot.sent == []
+    await stack.ctx.business.upsert("c1", 900, "Aakash", True, False)                          # connection disabled
+    await _run_biz(stack, _biz_update(55, "hi", uid_update=6), bot)
+    assert bot.sent == []
+    await stack.queue.shutdown(1)

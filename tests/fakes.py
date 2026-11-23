@@ -105,6 +105,7 @@ class FakeDB:
         self.runtime = FakeCollection()
         self.chats = FakeCollection()
         self.stickers = FakeCollection()
+        self.business_connections = FakeCollection()
 
 
 class FakeProvider:

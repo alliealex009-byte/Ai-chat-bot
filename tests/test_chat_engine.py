@@ -15,7 +15,7 @@ async def test_chat_roundtrip_saves_history_and_uses_persona(stack):
     assert r.status == "ok" and r.provider == "ollama" and r.model == "gemma3:4b"
     sent = stack.local.calls[0]
     assert sent[0]["role"] == "system" and "Ria" in sent[0]["content"] and sent[-1] == {"role": "user", "content": "Hi"}
-    assert any(m["content"] == "Can we kiss" for m in sent)   # few-shot style examples are included
+    assert any(m["content"] == "Kiss kro ge" for m in sent)   # few-shot style examples are included
     assert [m["role"] for m in await stack.ctx.conversations.last_n_text(1, 10)] == ["user", "assistant"]
     await stack.queue.shutdown(1)
 
@@ -229,4 +229,93 @@ async def test_group_uses_shared_scope_no_personal_memories_and_names(stack):
     assert first[-1]["content"] == "[Asha]: ria kya haal"
     assert any(m["content"] == "[Asha]: ria kya haal" for m in second)             # shared group history
     assert await stack.ctx.conversations.count(-1001) == 4 and await stack.ctx.conversations.count(7) == 0
+    await stack.queue.shutdown(1)
+
+
+async def test_gender_is_learned_from_user_and_used_in_prompt(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "Hi", "telegram")
+    assert "gender is unknown" in stack.local.calls[0][0]["content"]
+    await stack.engine.chat(1, "M ladka hu", "telegram")
+    assert (await stack.ctx.users.get(1))["gender"] == "male"
+    assert "user is a BOY" in stack.local.calls[1][0]["content"]
+    await stack.engine.chat(1, "kya kar rahe ho", "telegram")                    # remembered for later messages
+    assert "user is a BOY" in stack.local.calls[2][0]["content"]
+    await stack.engine.chat(2, "main ladki hu", "telegram")
+    assert "user is a GIRL" in stack.local.calls[3][0]["content"] and (await stack.ctx.users.get(1))["gender"] == "male"
+    await stack.queue.shutdown(1)
+
+
+async def test_english_reply_triggers_one_hinglish_retry(stack):
+    await _start(stack)
+    stack.local.script = ["Okayyyy chill! Seriously though what's up with you today?", "arre chill yaar, aaj kya scene hai? 😄"]
+    r = await stack.engine.chat(1, "Kuch nhi", "telegram")
+    assert len(stack.local.calls) == 2 and "too much English" in stack.local.calls[1][0]["content"]
+    assert r.text.startswith("arre chill yaar") and stack.engine.stats["language_retries"] == 1
+    await stack.queue.shutdown(1)
+
+
+async def test_transcript_from_real_chat_gets_right_context(stack):
+    """Replays the conversation that went wrong: the model must now see gender + grammar + anti-echo rules."""
+    await _start(stack)
+    for msg in ("Hi", "M ladka hu", "Kuch nhi", "Kya bol rhe ho", "Kuch nhi", "Acha", "Acha"):
+        await stack.engine.chat(5, msg, "telegram", "KR$NA")
+    last = stack.local.calls[-1]
+    system = last[0]["content"]
+    assert "user is a BOY" in system and "never mix these up" in system and "don't echo them" in system
+    convo = [m["content"] for m in last[1:] if m["role"] == "user"]
+    assert convo[-1] == "Acha" and "M ladka hu" in convo                          # context carried through
+    await stack.queue.shutdown(1)
+
+
+async def test_rolling_summary_is_built_used_and_cleared_on_reset(stack):
+    await _start(stack)
+    stack.settings.summary_every_n_messages = 4
+    stack.settings.memory_extract_every_n_messages = 50  # keep extraction out of this script
+    stack.local.script = ["acha!", "haan?", "oho", "sahi hai"]
+    for t in ("Kal exam hai yaar", "Maths ka hai", "Dar lag raha hai", "Padhai nhi hui"):
+        await stack.engine.chat(1, t, "telegram")
+    stack.local.script = ["User has a maths exam tomorrow and feels nervous."]
+    await stack.engine.drain(2)
+    u = await stack.ctx.users.get(1)
+    assert u["summary"] == "User has a maths exam tomorrow and feels nervous." and u["msgs_since_summary"] == 0
+    await stack.engine.chat(1, "Wapas aa gayi", "telegram")
+    system = [c for c in stack.local.calls if c[-1]["content"] == "Wapas aa gayi"][0][0]["content"]
+    assert "maths exam" in system and "EARLIER IN YOUR CHATS" in system
+    await stack.engine.reset(1)
+    assert (await stack.ctx.users.get(1)).get("summary") is None
+    await stack.queue.shutdown(1)
+
+
+async def test_summary_skips_sensitive_lines_and_memory_off(stack):
+    await _start(stack)
+    stack.settings.summary_every_n_messages = 4
+    for t in ("hi", "mera password hunter2 hai", "ok", "bye"):
+        await stack.ctx.conversations.add(1, "user", t, "telegram")
+    await stack.ctx.users.get_or_create(1)
+    for _ in range(4):
+        await stack.ctx.users.bump_counters(1)
+    stack.local.script = ["User said hi."]
+    assert await stack.ctx.memory_service.maybe_summarize(1) is True
+    assert "hunter2" not in " ".join(m["content"] for m in stack.local.calls[-1])
+    await stack.ctx.users.set_memory_enabled(1, False)
+    for _ in range(4):
+        await stack.ctx.users.bump_counters(1)
+    assert await stack.ctx.memory_service.maybe_summarize(1) is False
+    await stack.queue.shutdown(1)
+
+
+async def test_user_stated_name_is_remembered_instantly(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "Mera naam Rahul hai", "telegram")
+    assert (await stack.ctx.users.get(1))["preferred_name"] == "Rahul"
+    await stack.engine.chat(1, "mera naam kya hai", "telegram")
+    assert (await stack.ctx.users.get(1))["preferred_name"] == "Rahul"
+    await stack.queue.shutdown(1)
+
+
+async def test_extra_hints_reach_the_system_prompt(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "hi", "telegram", hints=["SECRETARY MODE: you are replying in Aakash's chat"])
+    assert "SECRETARY MODE" in stack.local.calls[0][0]["content"]
     await stack.queue.shutdown(1)

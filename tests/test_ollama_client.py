@@ -42,7 +42,7 @@ class FakeOllama:
 
 async def _client(fake, **over):
     url = await fake.start()
-    return OllamaClient(make_settings(ollama_base_url=url, ollama_retries=1, **over))
+    return OllamaClient(make_settings(**{"ollama_base_url": url, "ollama_retries": 1, **over}))
 
 
 async def test_success_uses_chat_api_and_configured_options():

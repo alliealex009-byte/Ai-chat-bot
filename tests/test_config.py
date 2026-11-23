@@ -20,7 +20,7 @@ def test_defaults_use_gemma_and_local_only(monkeypatch, tmp_path):
     assert s.ollama_base_url == "http://127.0.0.1:11434"
     assert s.ai_mode == "local" and not s.enable_api_fallback and not s.api_fallback_active
     assert not s.hf_replica_enabled
-    assert (s.ai_temperature, s.ai_top_p, s.ai_max_tokens, s.ai_context_length) == (0.8, 0.9, 60, 2048)
+    assert (s.ai_temperature, s.ai_top_p, s.ai_max_tokens, s.ai_context_length) == (0.7, 0.9, 60, 2048)
     assert s.mongo_db_name == "ria_database" and s.mongo_port == 27018
 
 
