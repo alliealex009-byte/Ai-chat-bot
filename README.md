@@ -358,5 +358,24 @@ Behaviour: she replies as Ria (not pretending to be you; if someone asks for you
 Owner panel → ⚙️ Controls → *Secretary mode* switches it on/off instantly; the Stats screen shows connected accounts. Chat include/exclude lists are managed in Telegram itself, not by the bot.
 Needs python-telegram-bot ≥ 21.6 (already pinned). After `git pull`, restart; no other change is required.
 
+**v2.3 changes.**
+- **Honest answers about AI.** Short sincere questions ("kya tum ai ho", "which ai model") get a fixed, instant, in-voice line that says she is an AI called Ria, never a denial and never an invented model name. She never brings the topic up herself. I will not make her claim to be human.
+- **Everything is a button.** `/start` is the only command shown; Features, Games (Truth/Dare/Would you rather/Shayari), Meri yaadein, Settings (language, boy/girl, name), Web chat code, About & Privacy are all menus.
+  Stickers get a natural reaction (and sometimes a sticker back). Name-based grammar: common names (e.g. AAKASH) start with masculine grammar until the user says otherwise.
+- **Memory is always on.** Users can no longer switch memory off or delete their data from the bot; chats are kept forever (`CONVERSATION_RETENTION_DAYS=0`, `MAX_STORED_MESSAGES_PER_USER=50000`) and the About screen tells users this. Deleting on request is an owner-panel action (🧹 Delete user data); keep honouring such requests, privacy laws (DPDP/GDPR) require it.
+  The web API still has its own reset/forget endpoints; remove them in `app/api/server.py` if you want those gone too.
+- **Self-improvement, honestly.** In the background Ria keeps adding fact memories and a rolling summary per user, so she gets more personal over time. Gemma's weights are NOT trained by chatting (no CPU VPS can do that). Owner panel → 📦 Export data gives a pseudonymous JSONL of private chats (sensitive lines, groups and secretary chats excluded) you can fine-tune with on a GPU machine or mine for better few-shot examples.
+- **Retention.** 🔥 daily streak on the home card, games, and gentle "miss you" nudges to users inactive 2+ days (max 3 unanswered, 3 days apart, off switch in Controls → Nudges).
+- **Secretary mode fixed.** In business chats Ria now introduces herself ("Main Ria hu, Aakash ki assistant"), answers with a dedicated assistant prompt (never pretends to be you, says you're busy, stays calm if the person is rude), answers one message at a time (no more "pehle wale ka reply aa raha hai") and stays silent instead of sending error texts. Each message is also DM'd to you (`SECRETARY_NOTIFY_OWNER=false` to stop).
+
+Update an existing `.env`:
+
+```bash
+cd /opt/ria
+sudo sed -i 's/^CONVERSATION_RETENTION_DAYS=.*/CONVERSATION_RETENTION_DAYS=0/; s/^MAX_STORED_MESSAGES_PER_USER=.*/MAX_STORED_MESSAGES_PER_USER=50000/' .env
+grep -q '^SECRETARY_NOTIFY_OWNER=' .env || echo 'SECRETARY_NOTIFY_OWNER=true' | sudo tee -a .env >/dev/null
+git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate && sudo systemctl restart ria
+```
+
 ## License
 MIT (see `LICENSE`).
