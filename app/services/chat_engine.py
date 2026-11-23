@@ -12,16 +12,16 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.ai.errors import AIError, AITimeout
-from app.ai.prompts import (fallback_line, looks_like_injection, mentions_ai, polish_reply, sanitize_user_text,
-                            strip_ai_sentences)
+from app.ai.prompts import (fallback_line, looks_english, looks_like_injection, mentions_ai, polish_reply,
+                            sanitize_user_text, strip_ai_sentences)
 from app.ai.router import AIRouter
 from app.config import Settings
 from app.database.conversations import ConversationRepo
 from app.database.memories import MemoryRepo
 from app.database.users import UserRepo
 from app.database.web import WebAuthRepo
-from app.personality import (FEWSHOT, HINT_NO_AI, HINT_SINCERE_AI, HINT_TECH, asks_about_tech, build_system_prompt,
-                             is_asking_if_ai, wants_long_answer)
+from app.personality import (FEWSHOT, HINT_HINDI, HINT_NO_AI, HINT_SINCERE_AI, HINT_TECH, asks_about_tech,
+                             build_system_prompt, detect_gender, detect_name, is_asking_if_ai, wants_long_answer)
 from app.services.memory import MemoryService
 from app.services.queue import InferenceQueue, QueueClosed, QueueFull, QueueTimeout, UserBusy
 
@@ -58,13 +58,14 @@ class ChatEngine:
         self.memory_service = memory_service
         self.web_auth = web_auth
         self.started_at = time.time()
-        self.stats = {"messages": 0, "ok": 0, "errors": 0, "busy": 0, "injection_attempts": 0, "ai_talk_retries": 0,
+        self.stats = {"messages": 0, "ok": 0, "errors": 0, "busy": 0, "injection_attempts": 0, "ai_talk_retries": 0, "language_retries": 0,
                       "by_channel": {"telegram": 0, "web": 0}, "group_messages": 0}
         self._bg: set[asyncio.Task] = set()
 
     # -- chat --------------------------------------------------------------
     async def chat(self, user_id: int, text: str, channel: str = "telegram", first_name: str = "",
-                   username: str = "", scope: Optional[int] = None, group: bool = False) -> ChatReply:
+                   username: str = "", scope: Optional[int] = None, group: bool = False,
+                   hints: tuple | list = ()) -> ChatReply:
         """`scope` = conversation key (group chat id); defaults to the user's own DM conversation."""
         text = sanitize_user_text(text, self.s.max_input_chars)
         if not text:
@@ -82,15 +83,27 @@ class ChatEngine:
         tech = asks_about_tech(text)
         long_form = wants_long_answer(text) and not group
 
+        extra_hints = tuple(hints)
+
         async def job() -> ChatReply:
             user = await self.users.get_or_create(user_id, first_name, username)
+            told = detect_gender(text)  # only when the user clearly says it ("m ladka hu")
+            if told and told != user.get("gender"):
+                await self.users.set_gender(user_id, told)
+                user["gender"] = told
+            said_name = detect_name(text) if not group else None
+            if said_name and said_name != user.get("preferred_name") and not user.get("preferred_name"):
+                await self.users.set_preferred_name(user_id, said_name)
+                user["preferred_name"] = said_name
             speaker = (user.get("preferred_name") or user.get("first_name") or first_name or "friend")
             history = await self.conversations.recent(hid, self.s.history_messages, self.s.history_char_budget)
             use_memory = (not group) and user.get("memory_enabled", True)
             memories = await self.memory_service.prompt_memories(user_id) if use_memory else []
-            hints = [HINT_SINCERE_AI] if sincere_ai else [HINT_TECH] if tech else []
+            hints = ([HINT_SINCERE_AI] if sincere_ai else [HINT_TECH] if tech else []) + list(extra_hints)
             system = build_system_prompt(user.get("language", self.s.default_language),
-                                         None if group else speaker, memories, long_form, group, hints)
+                                         None if group else speaker, memories, long_form, group, hints,
+                                         user.get("gender"),
+                                         (user.get("summary") if use_memory else None))
             user_content = f"[{speaker}]: {text}" if group else text
             messages = [{"role": "system", "content": system}, *FEWSHOT, *history,
                         {"role": "user", "content": user_content}]
@@ -98,17 +111,22 @@ class ChatEngine:
             result = await self.router.chat(messages, max_tokens=tokens)
             reply = result.text
 
-            if not sincere_ai and mentions_ai(reply):  # Ria must not bring up AI-talk herself: one retry
+            retry_hints = []
+            if not sincere_ai and mentions_ai(reply):  # Ria must not bring up AI-talk herself
                 self.stats["ai_talk_retries"] += 1
-                messages[0] = {"role": "system", "content": system + "\n\n" + HINT_NO_AI}
+                retry_hints.append(HINT_NO_AI)
+            if not long_form and looks_english(reply):  # must text in Hinglish, not English
+                self.stats["language_retries"] += 1
+                retry_hints.append(HINT_HINDI)
+            if retry_hints:  # one corrective retry, slightly cooler
+                messages[0] = {"role": "system", "content": system + "\n\n" + "\n".join(retry_hints)}
                 try:
                     retry = await self.router.chat(messages, max_tokens=tokens, temperature=0.6)
-                    reply = retry.text
-                    result = retry
+                    reply, result = retry.text, retry
                 except AIError:
                     pass
-                if mentions_ai(reply):
-                    reply = strip_ai_sentences(reply) or fallback_line()
+            if not sincere_ai and mentions_ai(reply):
+                reply = strip_ai_sentences(reply) or fallback_line()
 
             reply = polish_reply(reply, long_form=long_form, group=group) or fallback_line()
             await self.conversations.add(hid, "user", user_content, channel)
@@ -137,7 +155,7 @@ class ChatEngine:
 
         self.stats["ok"] += 1
         if not group:
-            self._spawn(self.memory_service.maybe_extract(user_id))
+            self._spawn(self.memory_service.after_chat(user_id))
         return reply
 
     def _spawn(self, coro) -> None:
@@ -158,6 +176,7 @@ class ChatEngine:
 
     # -- user data ---------------------------------------------------------
     async def reset(self, user_id: int) -> int:
+        await self.users.set_summary(user_id, None)  # the summary is derived from the cleared chat
         return await self.conversations.clear(user_id)
 
     async def forget(self, user_id: int) -> dict:
