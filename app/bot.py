@@ -79,7 +79,7 @@ def build_application(ctx: AppContext) -> Application:
         log.warning("Secretary mode unavailable: python-telegram-bot too old")
     for name, fn in [
         ("start", start.start), ("help", start.help_cmd), ("about", start.about),
-        ("reset", commands.reset), ("memory", commands.memory), ("forget", commands.forget),
+        ("memory", commands.memory),
         ("language", commands.language), ("settings", commands.settings), ("name", commands.name),
         ("link", commands.link), ("gender", commands.gender), ("health", commands.health),
     ]:
@@ -95,7 +95,7 @@ def build_application(ctx: AppContext) -> Application:
     else:
         log.warning("No OWNER_USER_IDS set: owner panel is disabled")
     app.add_handler(CallbackQueryHandler(start.start_callback, pattern=r"^st:"))
-    app.add_handler(CallbackQueryHandler(commands.on_callback, pattern=r"^(forget|lang|mem):"))
+    app.add_handler(CallbackQueryHandler(commands.on_callback, pattern=r"^lang:"))
     app.add_handler(ChatMemberHandler(_on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     # DMs always; groups are filtered inside on_text (only when "Ria" is said, bot is tagged, or Ria is replied to)
     app.add_handler(MessageHandler((private | filters.ChatType.GROUPS) & filters.TEXT & ~filters.COMMAND, chat.on_text))
@@ -127,6 +127,11 @@ async def start_polling(app: Application, ctx: AppContext) -> None:
     await app.initialize()
     await app.start()
     await _begin_polling(app, ctx)
+    try:  # one visible command: everything else is a button
+        from telegram import BotCommand
+        await app.bot.set_my_commands([BotCommand("start", "✨ Ria ka menu kholo")])
+    except Exception as e:  # noqa: BLE001
+        log.info("set_my_commands skipped: %s", type(e).__name__)
     me = await app.bot.get_me()
     log.info("Telegram polling started as @%s", me.username)
 

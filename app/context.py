@@ -49,6 +49,9 @@ class AppContext:
     owner_tasks: set = field(default_factory=set)        # running broadcast tasks
     broadcast_cancel: Optional[asyncio.Event] = None
     sticker_gap: dict = field(default_factory=dict)      # chat_id -> replies since last sticker
+    user_state: dict = field(default_factory=dict)       # user_id -> pending DM input ("name")
+    secretary_seen: dict = field(default_factory=dict)   # (connection_id, chat_id) -> monotonic time of last bot reply
+    secretary_locks: dict = field(default_factory=dict)  # (connection_id, chat_id) -> asyncio.Lock (one reply at a time)
     secretary_pause: dict = field(default_factory=dict)  # (connection_id, chat_id) -> monotonic time owner last wrote
     telegram_running: bool = False
     telegram_last_error: Optional[str] = None

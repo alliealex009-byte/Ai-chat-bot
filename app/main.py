@@ -76,6 +76,8 @@ async def run() -> int:
     tg_app = build_application(ctx)
     await start_polling(tg_app, ctx)
     tasks.append(asyncio.create_task(polling_watchdog(tg_app, ctx)))
+    from app.services.nudges import nudge_loop
+    tasks.append(asyncio.create_task(nudge_loop(ctx, tg_app.bot)))
     log.info("RIA is up")
 
     await stop.wait()

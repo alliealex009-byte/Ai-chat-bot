@@ -72,8 +72,8 @@ class Settings(BaseModel):
     history_messages: int = Field(8, ge=2, le=60)
     history_char_budget: int = Field(3000, ge=500)
     max_input_chars: int = Field(2000, ge=50)
-    conversation_retention_days: int = Field(90, ge=1)
-    max_stored_messages_per_user: int = Field(200, ge=10)
+    conversation_retention_days: int = Field(0, ge=0)  # 0 = keep chats forever (memory + training data)
+    max_stored_messages_per_user: int = Field(50000, ge=10)
     memory_enabled: bool = True
     memory_extract_every_n_messages: int = Field(4, ge=2)
     summary_every_n_messages: int = Field(10, ge=4)
@@ -122,6 +122,7 @@ class Settings(BaseModel):
     owner_username: str = "Advik_prakashh"
     group_rate_limit_messages: int = Field(12, ge=1)
     secretary_pause_minutes: int = Field(10, ge=0)  # stay quiet this long after the account owner writes in a chat
+    secretary_notify_owner: bool = True  # DM the account owner each message Ria handled for them
     promoter_url: str = ""   # "Promoter" button on /start; empty -> owner's @username link
     updates_url: str = ""    # "Updates" button on /start; empty -> button hidden
 
@@ -239,8 +240,8 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         history_messages=_env("HISTORY_MESSAGES", "8"),
         history_char_budget=_env("HISTORY_CHAR_BUDGET", "3000"),
         max_input_chars=_env("MAX_INPUT_CHARS", "2000"),
-        conversation_retention_days=_env("CONVERSATION_RETENTION_DAYS", "90"),
-        max_stored_messages_per_user=_env("MAX_STORED_MESSAGES_PER_USER", "200"),
+        conversation_retention_days=_env("CONVERSATION_RETENTION_DAYS", "0"),
+        max_stored_messages_per_user=_env("MAX_STORED_MESSAGES_PER_USER", "50000"),
         memory_enabled=_bool("MEMORY_ENABLED", True),
         memory_extract_every_n_messages=_env("MEMORY_EXTRACT_EVERY_N_MESSAGES", "4"),
         summary_every_n_messages=_env("SUMMARY_EVERY_N_MESSAGES", "10"),
@@ -280,6 +281,7 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         owner_username=_env("OWNER_USERNAME", "Advik_prakashh"),
         group_rate_limit_messages=_env("GROUP_RATE_LIMIT_MESSAGES", "12"),
         secretary_pause_minutes=_env("SECRETARY_PAUSE_MINUTES", "10"),
+        secretary_notify_owner=_env("SECRETARY_NOTIFY_OWNER", "true"),
         promoter_url=_env("PROMOTER_URL", ""),
         updates_url=_env("UPDATES_URL", ""),
     )
