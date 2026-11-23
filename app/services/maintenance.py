@@ -15,7 +15,8 @@ async def cleanup_loop(settings: Settings, conversations: ConversationRepo, *lim
     while True:
         try:
             await asyncio.sleep(interval)
-            removed = await conversations.cleanup_older_than(settings.conversation_retention_days)
+            removed = (await conversations.cleanup_older_than(settings.conversation_retention_days)
+                       if settings.conversation_retention_days > 0 else 0)
             for lim in limiters:
                 lim.gc()
             if removed:

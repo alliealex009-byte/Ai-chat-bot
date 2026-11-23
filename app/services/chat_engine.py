@@ -21,7 +21,7 @@ from app.database.memories import MemoryRepo
 from app.database.users import UserRepo
 from app.database.web import WebAuthRepo
 from app.personality import (FEWSHOT, HINT_HINDI, HINT_NO_AI, HINT_SINCERE_AI, HINT_TECH, asks_about_tech,
-                             build_system_prompt, detect_gender, detect_name, is_asking_if_ai, wants_long_answer)
+                             build_secretary_prompt, canned_ai_answer, guess_gender, build_system_prompt, detect_gender, detect_name, FEWSHOT_SECRETARY, is_asking_if_ai, wants_long_answer)
 from app.services.memory import MemoryService
 from app.services.queue import InferenceQueue, QueueClosed, QueueFull, QueueTimeout, UserBusy
 
@@ -65,7 +65,7 @@ class ChatEngine:
     # -- chat --------------------------------------------------------------
     async def chat(self, user_id: int, text: str, channel: str = "telegram", first_name: str = "",
                    username: str = "", scope: Optional[int] = None, group: bool = False,
-                   hints: tuple | list = ()) -> ChatReply:
+                   hints: tuple | list = (), secretary_owner: Optional[str] = None) -> ChatReply:
         """`scope` = conversation key (group chat id); defaults to the user's own DM conversation."""
         text = sanitize_user_text(text, self.s.max_input_chars)
         if not text:
@@ -78,6 +78,17 @@ class ChatEngine:
         if looks_like_injection(text):
             self.stats["injection_attempts"] += 1
             log.warning("Possible prompt-injection attempt user=%s", user_id)
+
+        if not group and not secretary_owner:
+            canned = canned_ai_answer(text)
+            if canned:  # honest, fixed, instant answer to a short "are you AI / which model" question
+                user = await self.users.get_or_create(user_id, first_name, username)
+                await self.conversations.add(hid, "user", text, channel)
+                await self.conversations.add(hid, "assistant", canned, channel)
+                await self.users.bump_counters(user_id)
+                await self.users.touch_streak(user_id)
+                self.stats["ok"] += 1
+                return ChatReply("ok", canned, "canned", "-", 0)
 
         sincere_ai = is_asking_if_ai(text)
         tech = asks_about_tech(text)
@@ -97,15 +108,19 @@ class ChatEngine:
                 user["preferred_name"] = said_name
             speaker = (user.get("preferred_name") or user.get("first_name") or first_name or "friend")
             history = await self.conversations.recent(hid, self.s.history_messages, self.s.history_char_budget)
-            use_memory = (not group) and user.get("memory_enabled", True)
+            use_memory = (not group) and (not secretary_owner) and user.get("memory_enabled", True)
             memories = await self.memory_service.prompt_memories(user_id) if use_memory else []
             hints = ([HINT_SINCERE_AI] if sincere_ai else [HINT_TECH] if tech else []) + list(extra_hints)
             system = build_system_prompt(user.get("language", self.s.default_language),
                                          None if group else speaker, memories, long_form, group, hints,
-                                         user.get("gender"),
+                                         user.get("gender") or guess_gender(first_name or user.get("first_name", "")),
                                          (user.get("summary") if use_memory else None))
             user_content = f"[{speaker}]: {text}" if group else text
-            messages = [{"role": "system", "content": system}, *FEWSHOT, *history,
+            shots = FEWSHOT
+            if secretary_owner:  # answering in the account owner's chat: assistant role, not the friend persona
+                system = build_secretary_prompt(secretary_owner, speaker, user.get("language", self.s.default_language))
+                shots = FEWSHOT_SECRETARY
+            messages = [{"role": "system", "content": system}, *shots, *history,
                         {"role": "user", "content": user_content}]
             tokens = self.s.ai_max_tokens_long if long_form else self.s.ai_max_tokens
             result = await self.router.chat(messages, max_tokens=tokens)
@@ -132,6 +147,7 @@ class ChatEngine:
             await self.conversations.add(hid, "user", user_content, channel)
             await self.conversations.add(hid, "assistant", reply, channel)
             await self.users.bump_counters(user_id)
+            await self.users.touch_streak(user_id)
             return ChatReply("ok", reply, result.provider, result.model, result.latency_ms)
 
         try:
@@ -154,7 +170,7 @@ class ChatEngine:
             return ChatReply("db_error" if is_db else "error", MSG_DB_ERROR if is_db else MSG_ERROR)
 
         self.stats["ok"] += 1
-        if not group:
+        if not group and not secretary_owner:
             self._spawn(self.memory_service.after_chat(user_id))
         return reply
 
