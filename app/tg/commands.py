@@ -116,6 +116,18 @@ async def name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await safe_reply(update.message, f"Okayy, ab se {new[:40]} bulaungi 💗")
 
 
+async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/gender boy|girl — tells Ria how to talk to you (grammar only)."""
+    ctx = _ctx(context)
+    arg = (context.args[0].lower() if context.args else "")
+    g = {"boy": "male", "ladka": "male", "male": "male", "girl": "female", "ladki": "female", "female": "female"}.get(arg)
+    if not g:
+        return await safe_reply(update.message, "Aise likho: /gender boy ya /gender girl")
+    await ctx.users.get_or_create(update.effective_user.id, update.effective_user.first_name or "", update.effective_user.username or "")
+    await ctx.users.set_gender(update.effective_user.id, g)
+    await safe_reply(update.message, "Done, ab se aise hi baat karungi 😄" if g == "male" else "Done 💗 ab se aise hi baat karungi")
+
+
 async def link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = _ctx(context)
     if not ctx.settings.api_enabled:
@@ -133,7 +145,8 @@ async def link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ctx = _ctx(context)
-    if update.effective_user.id not in ctx.settings.admin_user_ids:
+    uid = update.effective_user.id
+    if uid not in ctx.settings.admin_user_ids and uid not in ctx.settings.owner_ids:
         return  # silently ignore non-admins
     h = await ctx.health(detailed=True)
     q = h["queue"]

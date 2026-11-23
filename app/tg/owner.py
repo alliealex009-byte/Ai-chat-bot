@@ -84,7 +84,7 @@ async def _stats_text(ctx) -> str:
         f"messages: {st['messages']} (groups {st['group_messages']}) | ok {st['ok']} | errors {st['errors']} | busy {st['busy']}\n"
         f"queue: {h['queue']['queued']} waiting / {h['queue']['active']} running\n"
         f"latency avg/p95: {h['latency']['avg_ms']}/{h['latency']['p95_ms']} ms\n"
-        f"banned users: {len(ctx.banned)}\n"
+        f"banned users: {len(ctx.banned)} | secretary accounts: {await ctx.business.count_active()}\n"
         f"bot {_on(rt['bot_enabled'])} | DM {_on(rt['dm_enabled'])} | groups {_on(rt['group_enabled'])} | "
         f"stickers {_on(rt['stickers_enabled'])} ({rt['sticker_chance']}%)"
     )
@@ -96,6 +96,7 @@ async def _controls(ctx):
         [(f"Bot: {_on(rt['bot_enabled'])}", "own:tg:bot_enabled")],
         [(f"DM replies: {_on(rt['dm_enabled'])}", "own:tg:dm_enabled"), (f"Groups: {_on(rt['group_enabled'])}", "own:tg:group_enabled")],
         [(f"Stickers: {_on(rt['stickers_enabled'])}", "own:tg:stickers_enabled"), (f"Chance: {rt['sticker_chance']}%", "own:chance")],
+        [(f"Secretary mode: {_on(rt['secretary_enabled'])}", "own:tg:secretary_enabled")],
         BACK,
     ]
     return "⚙️ Controls (changes apply instantly, saved in DB)", _kb(rows)
@@ -137,7 +138,7 @@ async def owner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif act == "ctl":
         text, kb = await _controls(ctx)
         await q.edit_message_text(text, reply_markup=kb)
-    elif act == "tg" and arg in ("bot_enabled", "dm_enabled", "group_enabled", "stickers_enabled"):
+    elif act == "tg" and arg in ("bot_enabled", "dm_enabled", "group_enabled", "stickers_enabled", "secretary_enabled"):
         await ctx.runtime.toggle(arg)
         text, kb = await _controls(ctx)
         await q.edit_message_text(text, reply_markup=kb)
