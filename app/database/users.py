@@ -25,6 +25,7 @@ class UserRepo:
                     "memory_enabled": True,
                     "message_count": 0,
                     "msgs_since_extract": 0,
+                    "msgs_since_summary": 0,
                 },
                 "$set": {"first_name": (first_name or "")[:64], "username": (username or "")[:64],
                          "username_lc": (username or "").lower()[:64], "last_seen": now},
@@ -46,15 +47,26 @@ class UserRepo:
         name = " ".join((name or "").split())[:40] or None
         await self.col.update_one({"_id": user_id}, {"$set": {"preferred_name": name}})
 
+    async def set_gender(self, user_id: int, gender: Optional[str]) -> None:
+        if gender in ("male", "female", None):
+            await self.col.update_one({"_id": user_id}, {"$set": {"gender": gender}})
+
     async def set_memory_enabled(self, user_id: int, enabled: bool) -> None:
         await self.col.update_one({"_id": user_id}, {"$set": {"memory_enabled": bool(enabled)}})
 
     async def bump_counters(self, user_id: int) -> dict:
-        await self.col.update_one({"_id": user_id}, {"$inc": {"message_count": 1, "msgs_since_extract": 1}})
+        await self.col.update_one({"_id": user_id}, {"$inc": {"message_count": 1, "msgs_since_extract": 1, "msgs_since_summary": 1}})
         return await self.col.find_one({"_id": user_id}) or {}
 
     async def reset_extract_counter(self, user_id: int) -> None:
         await self.col.update_one({"_id": user_id}, {"$set": {"msgs_since_extract": 0}})
+
+    async def set_summary(self, user_id: int, summary: Optional[str]) -> None:
+        summary = " ".join((summary or "").split())[:600] or None
+        await self.col.update_one({"_id": user_id}, {"$set": {"summary": summary, "msgs_since_summary": 0}})
+
+    async def reset_summary_counter(self, user_id: int) -> None:
+        await self.col.update_one({"_id": user_id}, {"$set": {"msgs_since_summary": 0}})
 
     async def delete(self, user_id: int) -> None:
         await self.col.delete_one({"_id": user_id})

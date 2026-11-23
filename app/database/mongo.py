@@ -62,6 +62,7 @@ class Mongo:
         await db.web_sessions.create_index([("user_id", 1)])
         await db.web_sessions.create_index([("expires_at", 1)], expireAfterSeconds=0)
         await db.users.create_index([("username_lc", 1)])
+        await db.business_connections.create_index([("user_id", 1)])
         await db.chats.create_index([("active", 1), ("last_seen", -1)])
         await db.stickers.create_index([("set_name", 1)])
         await db.link_codes.create_index([("code_hash", 1)], unique=True)

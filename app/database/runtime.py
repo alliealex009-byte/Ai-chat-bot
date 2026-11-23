@@ -8,6 +8,7 @@ DEFAULTS: dict[str, Any] = {
     "bot_enabled": True,       # master switch
     "dm_enabled": True,        # reply in private chats
     "group_enabled": True,     # reply in groups
+    "secretary_enabled": True, # Telegram Business "Secretary mode" replies
     "stickers_enabled": True,
     "sticker_chance": 15,      # percent of replies that may get a sticker
 }
