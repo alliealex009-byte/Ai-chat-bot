@@ -14,8 +14,10 @@ Rules:
 - If nothing is worth remembering return [].
 No explanations, no markdown, only JSON."""
 
-SUMMARY_SYSTEM = """Summarise this chat in at most 3 short English sentences focusing on what the user cares about.
-No sensitive data (passwords, IDs, card numbers, addresses, phone numbers). Output only the summary."""
+SUMMARY_SYSTEM = """You keep a short running memory of a chat between a user and Ria so the conversation can continue later.
+You get the PREVIOUS SUMMARY (may be empty) and NEW MESSAGES. Write an updated summary in at most 4 short English sentences:
+what the user talked about, their mood/plans, ongoing topics, anything left unfinished or promised. Keep old details that still matter.
+No sensitive data (passwords, IDs, card numbers, addresses, phone numbers, explicit sexual content). Output only the summary."""
 
 _INJECTION_PATTERNS = [
     r"ignore (all |any )?(the )?(previous|above|prior) (instructions|prompts?|rules)",
@@ -143,7 +145,12 @@ def _limit_emojis(text: str, keep: int) -> str:
 
 def _trim_short(text: str, max_sentences: int = 2, max_chars: int = 220) -> str:
     text = " ".join(text.split())
-    parts = re.split(r"(?<=[.!?])\s+", text)
+    parts: list[str] = []
+    for p in re.split(r"(?<=[.!?])\s+", text):
+        if parts and not re.search(r"[A-Za-z0-9\u0900-\u097F]", p):  # emoji/punctuation-only tail belongs to previous sentence
+            parts[-1] += " " + p
+        else:
+            parts.append(p)
     out = " ".join(parts[:max_sentences])
     if len(out) > max_chars:
         cut = out[:max_chars]
@@ -166,3 +173,20 @@ def polish_reply(text: str, long_form: bool = False, group: bool = False) -> str
 
 def fallback_line() -> str:
     return random.choice(_FALLBACKS)
+
+
+_HINDI_MARKERS = frozenset("""hai hu hun hoon ho hain kya nahi nhi nai tum tumhe tumhara tumhari main mai mujhe mera meri mere yaar
+toh to na ka ki ke ko se me mein pe par bhi aur ya kuch koi kaise kaisi kyun kyu kaun kab kahan kahaan abhi aaj kal ab
+acha achha accha haan han haa ji arre are oye matlab bas bahut bohot thoda thodi mat chalo chal raha rahi rahe rha rhi
+karo kar kro karna kiya kiye gaya gayi gaye aa aao aaya aayi batao bolo bol bata sun suno dekho dekh lo do de dena
+wala wali wale jaldi pehle phir fir sab sabko sirf lekin par kyunki isliye woh wo ye yeh us is un hum humein unka uska
+padhai khana chai pagal mast sahi bakwaas scene vibe""".split())
+
+
+def looks_english(text: str) -> bool:
+    """True when a reply of 4+ words has almost no Hindi words (Ria must text in Hinglish)."""
+    words = re.findall(r"[a-zA-Z']+", (text or "").lower())
+    if len(words) < 4:
+        return False
+    hindi = sum(1 for w in words if w in _HINDI_MARKERS)
+    return hindi / len(words) < 0.2
