@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.ai.router import AIRouter
 from app.config import Settings
+from app.database.business import BusinessRepo
 from app.database.chats import ChatsRepo
 from app.database.conversations import ConversationRepo
 from app.database.memories import MemoryRepo
@@ -39,6 +40,7 @@ class AppContext:
     dedupe: DedupeCache
     runtime: RuntimeSettings
     chats: ChatsRepo
+    business: BusinessRepo
     stickers: StickersRepo
     chat_limiter: SlidingWindowLimiter
     started_at: float = field(default_factory=time.time)
@@ -47,6 +49,7 @@ class AppContext:
     owner_tasks: set = field(default_factory=set)        # running broadcast tasks
     broadcast_cancel: Optional[asyncio.Event] = None
     sticker_gap: dict = field(default_factory=dict)      # chat_id -> replies since last sticker
+    secretary_pause: dict = field(default_factory=dict)  # (connection_id, chat_id) -> monotonic time owner last wrote
     telegram_running: bool = False
     telegram_last_error: Optional[str] = None
 
@@ -101,6 +104,6 @@ def assemble_with_db(settings: Settings, mongo: Mongo, router: AIRouter, queue: 
         user_limiter=SlidingWindowLimiter(settings.user_rate_limit_messages, settings.user_rate_limit_window_seconds),
         global_limiter=SlidingWindowLimiter(settings.global_rate_limit_messages, settings.global_rate_limit_window_seconds),
         dedupe=DedupeCache(settings.dedupe_cache_size),
-        runtime=RuntimeSettings(db), chats=ChatsRepo(db), stickers=StickersRepo(db),
+        runtime=RuntimeSettings(db), chats=ChatsRepo(db), business=BusinessRepo(db), stickers=StickersRepo(db),
         chat_limiter=SlidingWindowLimiter(settings.group_rate_limit_messages, 60),
     )

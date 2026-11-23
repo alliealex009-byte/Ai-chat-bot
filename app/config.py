@@ -35,7 +35,7 @@ class Settings(BaseModel):
     # Ollama
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma3:4b"
-    ai_temperature: float = Field(0.8, ge=0.0, le=2.0)
+    ai_temperature: float = Field(0.7, ge=0.0, le=2.0)
     ai_top_p: float = Field(0.9, gt=0.0, le=1.0)
     ai_max_tokens: int = Field(60, ge=16, le=2048)
     ai_max_tokens_long: int = Field(500, ge=16, le=4096)
@@ -72,10 +72,11 @@ class Settings(BaseModel):
     history_messages: int = Field(8, ge=2, le=60)
     history_char_budget: int = Field(3000, ge=500)
     max_input_chars: int = Field(2000, ge=50)
-    conversation_retention_days: int = Field(30, ge=1)
+    conversation_retention_days: int = Field(90, ge=1)
     max_stored_messages_per_user: int = Field(200, ge=10)
     memory_enabled: bool = True
-    memory_extract_every_n_messages: int = Field(8, ge=2)
+    memory_extract_every_n_messages: int = Field(4, ge=2)
+    summary_every_n_messages: int = Field(10, ge=4)
     max_memories_per_user: int = Field(50, ge=5)
     memories_in_prompt: int = Field(8, ge=0, le=30)
     cleanup_interval_minutes: int = Field(60, ge=5)
@@ -115,11 +116,14 @@ class Settings(BaseModel):
     log_message_content: bool = False
     default_language: str = "hinglish"
 
-    # Owner panel (access is by NUMERIC Telegram id only; ADMIN_USER_IDS are also owners)
+    # Owner panel: access is by NUMERIC Telegram id and ONLY for OWNER_USER_IDS (admins do NOT get it)
     owner_user_ids: list[int] = Field(default_factory=list)
     owner_name: str = "AAKASH"
     owner_username: str = "Advik_prakashh"
     group_rate_limit_messages: int = Field(12, ge=1)
+    secretary_pause_minutes: int = Field(10, ge=0)  # stay quiet this long after the account owner writes in a chat
+    promoter_url: str = ""   # "Promoter" button on /start; empty -> owner's @username link
+    updates_url: str = ""    # "Updates" button on /start; empty -> button hidden
 
     @field_validator("ai_mode")
     @classmethod
@@ -171,7 +175,7 @@ class Settings(BaseModel):
 
     @property
     def owner_ids(self) -> set[int]:
-        return set(self.owner_user_ids) | set(self.admin_user_ids)
+        return set(self.owner_user_ids)
 
     @property
     def api_fallback_active(self) -> bool:
@@ -209,7 +213,7 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         admin_user_ids=admins,
         ollama_base_url=_env("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=_env("OLLAMA_MODEL", "gemma3:4b"),
-        ai_temperature=_env("AI_TEMPERATURE", "0.8"),
+        ai_temperature=_env("AI_TEMPERATURE", "0.7"),
         ai_top_p=_env("AI_TOP_P", "0.9"),
         ai_max_tokens=_env("AI_MAX_TOKENS", "60"),
         ai_max_tokens_long=_env("AI_MAX_TOKENS_LONG", "500"),
@@ -235,10 +239,11 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         history_messages=_env("HISTORY_MESSAGES", "8"),
         history_char_budget=_env("HISTORY_CHAR_BUDGET", "3000"),
         max_input_chars=_env("MAX_INPUT_CHARS", "2000"),
-        conversation_retention_days=_env("CONVERSATION_RETENTION_DAYS", "30"),
+        conversation_retention_days=_env("CONVERSATION_RETENTION_DAYS", "90"),
         max_stored_messages_per_user=_env("MAX_STORED_MESSAGES_PER_USER", "200"),
         memory_enabled=_bool("MEMORY_ENABLED", True),
-        memory_extract_every_n_messages=_env("MEMORY_EXTRACT_EVERY_N_MESSAGES", "8"),
+        memory_extract_every_n_messages=_env("MEMORY_EXTRACT_EVERY_N_MESSAGES", "4"),
+        summary_every_n_messages=_env("SUMMARY_EVERY_N_MESSAGES", "10"),
         max_memories_per_user=_env("MAX_MEMORIES_PER_USER", "50"),
         memories_in_prompt=_env("MEMORIES_IN_PROMPT", "8"),
         cleanup_interval_minutes=_env("CLEANUP_INTERVAL_MINUTES", "60"),
@@ -274,6 +279,9 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         owner_name=_env("OWNER_NAME", "AAKASH"),
         owner_username=_env("OWNER_USERNAME", "Advik_prakashh"),
         group_rate_limit_messages=_env("GROUP_RATE_LIMIT_MESSAGES", "12"),
+        secretary_pause_minutes=_env("SECRETARY_PAUSE_MINUTES", "10"),
+        promoter_url=_env("PROMOTER_URL", ""),
+        updates_url=_env("UPDATES_URL", ""),
     )
     return Settings(**raw)
 
