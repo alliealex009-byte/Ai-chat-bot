@@ -13,8 +13,11 @@ from telegram.ext import ContextTypes
 from app.tg.utils import safe_reply
 
 STICKER = [
-    "Hehe cute sticker! 😄 Par main abhi stickers samajh nahi paati, text mein batao na kya mood hai?",
-    "Sticker mast hai 😂 Lekin mujhe sirf text padhna aata hai, kuch likh ke bhejo!",
+    "hehe cute 😄 ab bolo, mood kya hai?",
+    "arre waah 😂 ye wala mast tha!",
+    "haha 🙈 aur bhejo na, ya kuch bolo bhi 😌",
+    "okayyy 😎 sticker se kaam nahi chalega, kuch likho 💗",
+    "uff 😂 tum bhi na! kya chal raha aaj?",
 ]
 PHOTO = [
     "Photo dikh toh gayi 🥺 par abhi main images samajh nahi sakti. Text mein bata do kya hai usme?",
@@ -43,3 +46,9 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ctx.user_limiter.allow(("media", update.effective_user.id)):
         return
     await safe_reply(m, random.choice(pool))
+    if m.sticker:
+        from app.tg.stickers import maybe_send_sticker
+        try:
+            await maybe_send_sticker(ctx, context.bot, m.chat_id, getattr(m.sticker, "emoji", "") or "😄", None)
+        except Exception:  # noqa: BLE001 - cosmetic
+            pass

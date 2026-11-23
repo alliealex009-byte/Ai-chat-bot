@@ -21,6 +21,7 @@ MENU_ROWS = [
     [("📣 Broadcast", "own:bc"), ("✉️ DM user", "own:dm")],
     [("👥 Group msg", "own:gm"), ("🎭 Stickers", "own:st")],
     [("🚫 Ban / Unban", "own:ban"), ("🗂 Groups", "own:groups")],
+    [("📦 Export data", "own:export"), ("🧹 Delete user data", "own:wipe")],
     [("✖️ Close", "own:close")],
 ]
 BACK = [("⬅️ Menu", "own:menu")]
@@ -96,7 +97,7 @@ async def _controls(ctx):
         [(f"Bot: {_on(rt['bot_enabled'])}", "own:tg:bot_enabled")],
         [(f"DM replies: {_on(rt['dm_enabled'])}", "own:tg:dm_enabled"), (f"Groups: {_on(rt['group_enabled'])}", "own:tg:group_enabled")],
         [(f"Stickers: {_on(rt['stickers_enabled'])}", "own:tg:stickers_enabled"), (f"Chance: {rt['sticker_chance']}%", "own:chance")],
-        [(f"Secretary mode: {_on(rt['secretary_enabled'])}", "own:tg:secretary_enabled")],
+        [(f"Secretary mode: {_on(rt['secretary_enabled'])}", "own:tg:secretary_enabled"), (f"Nudges: {_on(rt['nudges_enabled'])}", "own:tg:nudges_enabled")],
         BACK,
     ]
     return "⚙️ Controls (changes apply instantly, saved in DB)", _kb(rows)
@@ -138,7 +139,7 @@ async def owner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif act == "ctl":
         text, kb = await _controls(ctx)
         await q.edit_message_text(text, reply_markup=kb)
-    elif act == "tg" and arg in ("bot_enabled", "dm_enabled", "group_enabled", "stickers_enabled", "secretary_enabled"):
+    elif act == "tg" and arg in ("bot_enabled", "dm_enabled", "group_enabled", "stickers_enabled", "secretary_enabled", "nudges_enabled"):
         await ctx.runtime.toggle(arg)
         text, kb = await _controls(ctx)
         await q.edit_message_text(text, reply_markup=kb)
@@ -176,6 +177,15 @@ async def owner_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif act == "ban":
         ctx.owner_state[uid] = {"action": "ban_who"}
         await show("🚫 User ka numeric id ya @username bhejo (ban/unban toggle). /cancel se rukna.")
+    elif act == "export":
+        await _export(ctx, context, q)
+    elif act == "wipe":
+        ctx.owner_state[uid] = {"action": "wipe_who"}
+        await show("🧹 Jis user ka saara data delete karna hai uska numeric id ya @username bhejo (sirf user ki request pe!). /cancel se rukna.")
+    elif act == "wipego" and ctx.owner_state.get(uid, {}).get("action") == "wipe_confirm":
+        target = ctx.owner_state.pop(uid)["user"]
+        res = await ctx.engine.forget(target)
+        await show(f"🧹 User {target}: {res['messages']} messages aur {res['memories']} memories delete ho gayi.")
     elif act == "groups":
         text, kb = await _groups_screen(ctx)
         await q.edit_message_text(text, reply_markup=kb)
@@ -264,6 +274,21 @@ async def _run_broadcast(ctx, bot, owner_chat: int, targets: list[int], text: st
 
 
 # -- owner's typed/sticker input for pending actions ----------------------------------------------
+async def _export(ctx, context, q) -> None:
+    import os
+    from datetime import datetime
+
+    from app.services.dataset import build_dataset
+
+    path = os.path.join("data", "exports", f"ria_dataset_{datetime.now().strftime('%Y%m%d_%H%M')}.jsonl")
+    info = await build_dataset(ctx, path)
+    with open(path, "rb") as f:
+        await context.bot.send_document(
+            chat_id=q.message.chat_id, document=f, filename=os.path.basename(path),
+            caption=f"📦 {info['users']} users, {info['rows']} chat windows, {info['messages']} messages (pseudonymous, private chats only)")
+    await q.edit_message_text("📦 Dataset bhej diya ✅", reply_markup=_kb([BACK]))
+
+
 async def _resolve_user(ctx, raw: str) -> Optional[int]:
     raw = raw.strip()
     if raw.lstrip("-").isdigit():
@@ -311,6 +336,14 @@ async def owner_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception as e:  # noqa: BLE001
             await msg.reply_text(f"Send nahi hua: {type(e).__name__}", reply_markup=_kb([BACK]))
         ctx.owner_state.pop(uid, None)
+    elif action == "wipe_who" and text:
+        target = await _resolve_user(ctx, text)
+        if target is None:
+            await msg.reply_text("User nahi mila.")
+        else:
+            ctx.owner_state[uid] = {"action": "wipe_confirm", "user": target}
+            await msg.reply_text(f"Pakka? User {target} ki saari chat, memories aur profile hamesha ke liye delete hongi.",
+                                 reply_markup=_kb([[("✅ Haan, delete", "own:wipego"), ("❌ Nahi", "own:menu")]]))
     elif action == "ban_who" and text:
         target = await _resolve_user(ctx, text)
         if target is None:

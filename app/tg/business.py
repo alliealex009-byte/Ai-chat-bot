@@ -6,14 +6,18 @@ account owner, and the owner has not just written in that chat himself (human ta
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
 from telegram import Update
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
+from app.personality import secretary_intro
+
 
 log = logging.getLogger(__name__)
+BUSINESS_SCOPE_BASE = 10**13  # conversation keys for business chats; never collide with user or group ids
 
 
 def _can_reply(conn) -> bool:
@@ -33,13 +37,7 @@ async def on_business_connection(update: Update, context: ContextTypes.DEFAULT_T
     log.info("Business connection %s user=%s enabled=%s", "updated", c.user.id, getattr(c, "is_enabled", True))
 
 
-async def _hint_for(owner_name: str) -> list[str]:
-    who = owner_name or "the account owner"
-    return [
-        f"SECRETARY MODE: you are replying in {who}'s private chat while they are away. You are Ria, not {who}. "
-        f"If the person wants {who}, say {who} is busy right now and you'll pass the message along. "
-        "Do not make promises, plans or decisions on their behalf."
-    ]
+INTRO_AFTER_SECONDS = 6 * 3600  # introduce Ria again when the chat was quiet this long
 
 
 async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -77,22 +75,38 @@ async def _handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not ctx.user_limiter.allow(sender.id) or not ctx.global_limiter.allow("global"):
         return
 
-    try:  # optional: show as read (needs the "mark messages as read" permission and a recent PTB)
-        await context.bot.read_business_message(business_connection_id=cid, chat_id=chat.id, message_id=msg.message_id)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        await context.bot.send_chat_action(chat_id=chat.id, action="typing", business_connection_id=cid)
-    except Exception:  # noqa: BLE001
-        pass
-    reply = await ctx.engine.chat(
-        sender.id, msg.text, "telegram", sender.first_name or "", sender.username or "",
-        hints=await _hint_for(conn.get("user_name", "")),
-    )
-    try:
-        await context.bot.send_message(chat_id=chat.id, text=reply.text, business_connection_id=cid)
-    except Exception as e:  # noqa: BLE001
-        log.warning("business send failed: %s", type(e).__name__)
+    owner = (conn.get("user_name") or "").strip().title() or "Owner"
+    who = sender.first_name or ""
+    lock = ctx.secretary_locks.setdefault(key, asyncio.Lock())
+    async with lock:  # messages of one chat are answered one at a time, in order (no "busy" replies)
+        if ctx.settings.secretary_notify_owner:
+            handle = f" (@{sender.username})" if sender.username else ""
+            try:
+                await context.bot.send_message(chat_id=conn["user_id"], text=f"📩 {who or 'Someone'}{handle}: {msg.text[:300]}")
+            except Exception:  # noqa: BLE001 - owner may not have opened the bot chat
+                pass
+        try:  # optional: show as read (needs the "mark messages as read" permission and a recent PTB)
+            await context.bot.read_business_message(business_connection_id=cid, chat_id=chat.id, message_id=msg.message_id)
+        except Exception:  # noqa: BLE001
+            pass
+        last = ctx.secretary_seen.get(key)
+        if last is None or time.monotonic() - last > INTRO_AFTER_SECONDS:
+            text = secretary_intro(owner, who)  # first contact: say clearly who is writing
+        else:
+            try:
+                await context.bot.send_chat_action(chat_id=chat.id, action="typing", business_connection_id=cid)
+            except Exception:  # noqa: BLE001
+                pass
+            reply = await ctx.engine.chat(sender.id, msg.text, "telegram", who, sender.username or "",
+                                          scope=BUSINESS_SCOPE_BASE + sender.id, secretary_owner=owner)
+            if reply.status != "ok":  # never show error/busy texts to a third party
+                return
+            text = reply.text
+        try:
+            await context.bot.send_message(chat_id=chat.id, text=text, business_connection_id=cid)
+            ctx.secretary_seen[key] = time.monotonic()
+        except Exception as e:  # noqa: BLE001
+            log.warning("business send failed: %s", type(e).__name__)
 
 
 async def on_business_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -6,6 +6,7 @@ import logging
 from telegram import ReplyParameters, Update
 from telegram.ext import ContextTypes
 
+from app.ai.prompts import is_sensitive
 from app.services.limiter import SlidingWindowLimiter
 from app.services.triggers import should_respond_in_group, strip_mention
 from app.tg.stickers import maybe_send_sticker
@@ -50,6 +51,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         if user.id in ctx.banned:
             return
+        if ctx.user_state.get(user.id) == "name":  # user pressed "Naam badlo" and now sends the name
+            ctx.user_state.pop(user.id, None)
+            new = " ".join(text.split())[:40]
+            if not new or is_sensitive(new):
+                return await safe_reply(msg, "Ye naam thik nahi lag raha, chhota sa naam batao 🙂")
+            await ctx.users.get_or_create(user.id, user.first_name or "", user.username or "")
+            await ctx.users.set_preferred_name(user.id, new)
+            return await safe_reply(msg, f"Okayy, ab se {new} bulaungi 💗")
         if not rt["bot_enabled"] or not rt["dm_enabled"]:
             if _warn.allow(("paused", user.id)):
                 await safe_reply(msg, MSG_PAUSED)
