@@ -52,7 +52,7 @@ tests/          pytest suite (+ live Gemma test)
 | Variable | What to put | Where it comes from |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | your bot token | @BotFather. **Use one token, one polling process.** |
-| `ADMIN_USER_IDS` | your numeric Telegram id | @userinfobot. Enables `/health` for you only |
+| `ADMIN_USER_IDS` | your numeric Telegram id | @userinfobot. Enables `/health` only (admins do NOT get the owner panel; use `OWNER_USER_IDS`) |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://127.0.0.1:11434` / `gemma3:4b` | already the defaults |
 | `MONGO_PASSWORD` | long random password | `install.sh` generates it |
 | `MONGO_PORT` / `MONGO_DB_NAME` | `27018` / `ria_database` | defaults |
@@ -305,27 +305,58 @@ Group chats keep their own shared conversation (no personal memories are used in
 **Stickers.** Ria sometimes (owner-set chance, default 15%, never twice in a row) follows a reply with a sticker from the library — matching the emoji in her reply when possible.
 The library starts **empty**: add stickers/packs from the owner panel (below).
 
-**Owner panel.** Send `/owner` (or `/panel`) to the bot in a private chat. Only numeric ids in `ADMIN_USER_IDS` / `OWNER_USER_IDS` can open it
+**Owner panel.** Send `/owner` (or `/panel`) to the bot in a private chat. Only numeric ids in `OWNER_USER_IDS` can open it (admins cannot)
 (usernames are never trusted: they can change). Buttons: 📊 Stats · ⚙️ Controls (bot on/off, DM replies, group replies, stickers on/off, sticker chance — saved in MongoDB, instant) ·
 📣 Broadcast (DMs / Groups / Both, preview + confirm + Stop button, throttled, auto-skips blocked users) · ✉️ DM a user (id or @username) · 👥 Message a group ·
 🎭 Stickers (add sticker, add whole pack, remove sticker, remove pack, list) · 🚫 Ban/Unban · 🗂 Groups (enable/disable Ria per group).
 To add stickers: Stickers → *Add pack* → send any sticker from that pack. `/cancel` aborts any pending step.
-You need AAKASH's **numeric** Telegram id (from @userinfobot) in `ADMIN_USER_IDS` or `OWNER_USER_IDS` — `@Advik_prakashh` is shown in the panel header but is not used for authorisation.
+You need AAKASH's **numeric** Telegram id (from @userinfobot) in `OWNER_USER_IDS` — `@Advik_prakashh` is shown in the panel header but is not used for authorisation.
 
-**Speed.** Defaults are now `AI_MAX_TOKENS=60`, `AI_CONTEXT_LENGTH=2048`, `HISTORY_MESSAGES=8`, `AI_TEMPERATURE=0.8` (shorter prompt + shorter answers = faster on CPU).
+**Speed.** Defaults are now `AI_MAX_TOKENS=60`, `AI_CONTEXT_LENGTH=2048`, `HISTORY_MESSAGES=8`, `AI_TEMPERATURE=0.7` (shorter prompt + shorter answers = faster on CPU).
 If your VPS `.env` already exists, those old values stay until you change them:
 
 ```bash
 cd /opt/ria
-sudo sed -i 's/^AI_MAX_TOKENS=.*/AI_MAX_TOKENS=60/; s/^AI_CONTEXT_LENGTH=.*/AI_CONTEXT_LENGTH=2048/; s/^AI_TEMPERATURE=.*/AI_TEMPERATURE=0.8/; s/^HISTORY_MESSAGES=.*/HISTORY_MESSAGES=8/; s/^HISTORY_CHAR_BUDGET=.*/HISTORY_CHAR_BUDGET=3000/' .env
+sudo sed -i 's/^AI_MAX_TOKENS=.*/AI_MAX_TOKENS=60/; s/^AI_CONTEXT_LENGTH=.*/AI_CONTEXT_LENGTH=2048/; s/^AI_TEMPERATURE=.*/AI_TEMPERATURE=0.7/; s/^HISTORY_MESSAGES=.*/HISTORY_MESSAGES=8/; s/^HISTORY_CHAR_BUDGET=.*/HISTORY_CHAR_BUDGET=3000/' .env
 grep -q '^OWNER_NAME=' .env || printf '\nOWNER_USER_IDS=\nOWNER_NAME=AAKASH\nOWNER_USERNAME=Advik_prakashh\nGROUP_RATE_LIMIT_MESSAGES=12\n' | sudo tee -a .env >/dev/null
 sudo chown root:ria .env && sudo chmod 640 .env
 git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate
 sudo systemctl restart ria && sudo systemctl status ria --no-pager
 ```
 
+**Chat quality (v2.1).** Ria now remembers a user's gender when they say it ("m ladka hu", "i am a girl") or set `/gender boy|girl`, and talks to them with the right grammar
+(she never mixes herself and the user: no "kya kar rahi hu tum"); with unknown gender she avoids gendered verbs. Replies that come out as English are detected and retried once in Hinglish.
+Boring replies ("kuch nhi", "acha") make her tease and start a topic instead of echoing, and unclear messages get "kya matlab? clear batao na".
+**Try and tune her without Telegram** (uses your real Ollama and the same pipeline, nothing saved):
+`cd /opt/ria && source venv/bin/activate && python scripts/try_chat.py` — then edit `app/personality.py` (rules + the few-shot examples at the bottom, which matter most for a 4B model), restart, repeat.
+Gemma 3 4B on CPU is a small model: it won't match a large cloud model's consistency even with good prompts. Expect improvement, not perfection; if some replies are still weak, send me the exact chat and I'll add targeted examples.
+
 **About a Hugging Face token already in `.env`.** RIA's VPS `.env` has no HF token: its only HF lines are the blank `HF_REPLICA_*` ones (replica off), and unknown lines are ignored.
 Check with `grep -n HF /opt/ria/.env`. A Hugging Face *write* token belongs only in GitHub → Secrets → `HF_TOKEN` (for the Space deploy), never in the VPS `.env` or in chats; if you don't recognise it, delete that line (and revoke the token at huggingface.co/settings/tokens if you're unsure where it came from).
+
+**`/start` screen (v2.2).** `/start` shows a card (your real message and memory counts) with buttons: 🍀 Ria features · 👥 Groups · 💸 Promoter · 📢 Updates · 🎮 Games (coming soon) · ➕ Add me to your group.
+The **👑 Owner panel** button appears only for ids in `OWNER_USER_IDS`; admins and everyone else never see it. Optional `.env`: `PROMOTER_URL` (default: the owner's @username link), `UPDATES_URL` (button hidden if empty).
+
+**Continuing old chats (v2.2).** Memory now has three layers, all in MongoDB and all deleted by `/forget`:
+recent messages (history, kept `CONVERSATION_RETENTION_DAYS=90` days) · short fact memories (extracted every 4 messages) · a rolling summary of the chat (refreshed every 10 messages) that is fed back into the prompt, so after days she can pick up where you stopped.
+A stated name ("mera naam Rohan hai") is saved instantly. `/reset` clears chat history and the summary but keeps fact memories. Summaries and facts are made by your local Gemma only, and lines with passwords/IDs/etc. are skipped.
+Update an existing `.env`:
+
+```bash
+cd /opt/ria
+sudo sed -i 's/^CONVERSATION_RETENTION_DAYS=.*/CONVERSATION_RETENTION_DAYS=90/; s/^MEMORY_EXTRACT_EVERY_N_MESSAGES=.*/MEMORY_EXTRACT_EVERY_N_MESSAGES=4/' .env
+grep -q '^SUMMARY_EVERY_N_MESSAGES=' .env || printf 'SUMMARY_EVERY_N_MESSAGES=10\nPROMOTER_URL=\nUPDATES_URL=\n' | sudo tee -a .env >/dev/null
+nano .env   # OWNER_USER_IDS=<AAKASH numeric id>  (admins no longer open the panel)
+git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate && sudo systemctl restart ria
+```
+
+**Secretary mode (Telegram Business).** Ria can answer private chats of *your own Telegram account* while you're away (needs Telegram Premium on that account).
+1. @BotFather → your bot → *Bot Settings* → **Business Mode** → turn on.
+2. Telegram → *Settings → Business → Chatbots* → add the bot. Choose **All private chats except…** (and list the chats Ria must NOT touch) or **Only selected chats**.
+3. Permissions: grant **Read Messages**, **Reply to Messages**, **Mark Messages As Read**. Leave **Delete Sent/Received Messages** and Manage-style permissions OFF; Ria never deletes anything.
+Behaviour: she replies as Ria (not pretending to be you; if someone asks for you she says you're busy and she'll pass it on). When *you* write in a chat yourself she stays quiet there for `SECRETARY_PAUSE_MINUTES` (default 10).
+Owner panel → ⚙️ Controls → *Secretary mode* switches it on/off instantly; the Stats screen shows connected accounts. Chat include/exclude lists are managed in Telegram itself, not by the bot.
+Needs python-telegram-bot ≥ 21.6 (already pinned). After `git pull`, restart; no other change is required.
 
 ## License
 MIT (see `LICENSE`).
