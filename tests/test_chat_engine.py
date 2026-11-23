@@ -198,7 +198,7 @@ async def test_ai_talk_is_retried_then_stripped_never_shown(stack):
 async def test_sincere_ai_question_may_admit_and_gets_hint(stack):
     await _start(stack)
     stack.local.script = ["haan yaar AI hu 😅 par Ria hi hu"]
-    r = await stack.engine.chat(1, "Tum ai ho kya", "telegram")
+    r = await stack.engine.chat(1, "yaar ek baat poochni thi sachchi batana kya tum ai ho kya", "telegram")  # long: goes to the model
     assert len(stack.local.calls) == 1                      # no retry: honest answer is allowed
     assert "sincerely asking" in stack.local.calls[0][0]["content"] and "AI" in r.text
     await stack.queue.shutdown(1)
@@ -318,4 +318,22 @@ async def test_extra_hints_reach_the_system_prompt(stack):
     await _start(stack)
     await stack.engine.chat(1, "hi", "telegram", hints=["SECRETARY MODE: you are replying in Aakash's chat"])
     assert "SECRETARY MODE" in stack.local.calls[0][0]["content"]
+    await stack.queue.shutdown(1)
+
+
+async def test_short_ai_and_model_questions_get_fixed_honest_answers_without_the_model(stack):
+    await _start(stack)
+    for q in ("Kya tum ai ho", "Which ai model u r", "Koon s ai model bto"):
+        r = await stack.engine.chat(1, q, "telegram")
+        assert r.status == "ok" and "AI" in r.text and "nahi hu" not in r.text.split("AI")[0][-12:]
+    assert stack.local.calls == []                           # instant, no model call
+    assert await stack.ctx.conversations.count(1) == 6      # still saved to history
+    await stack.queue.shutdown(1)
+
+
+async def test_streak_and_name_based_gender_hint(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "hi", "telegram", "AAKASH")
+    assert (await stack.ctx.users.get(1))["streak"] == 1
+    assert "BOY" in stack.local.calls[0][0]["content"]       # Aakash -> masculine grammar until told otherwise
     await stack.queue.shutdown(1)

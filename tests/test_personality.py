@@ -150,3 +150,11 @@ def test_summary_goes_into_prompt_for_dm_only():
     from app.personality import build_system_prompt
     assert "maths exam" in build_system_prompt(summary="Has a maths exam.")
     assert "maths exam" not in build_system_prompt(summary="Has a maths exam.", group=True)
+
+
+def test_secretary_prompt_and_intro_are_honest_about_who_is_writing():
+    from app.personality import build_secretary_prompt, secretary_intro
+    p = build_secretary_prompt("Aakash", "Dora")
+    assert "NOT Aakash" in p and "busy" in p and "Dora" in p and "AI assistant" in p
+    i = secretary_intro("Aakash", "Dora")
+    assert "Ria" in i and "assistant" in i and "Aakash" in i and "Dora" in i

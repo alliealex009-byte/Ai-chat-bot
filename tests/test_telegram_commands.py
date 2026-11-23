@@ -25,7 +25,7 @@ def _upd(uid, msg, uid_update=1, data=None):
     if data is not None:
         q = SimpleNamespace(from_user=SimpleNamespace(id=uid), data=data, edits=[])
         async def answer(): pass
-        async def edit(text, reply_markup=None): q.edits.append(text)
+        async def edit(text, reply_markup=None, **kw): q.edits.append(text)
         q.answer, q.edit_message_text = answer, edit
     return SimpleNamespace(effective_user=SimpleNamespace(id=uid, first_name="Asha", username="a", is_bot=False),
                            effective_chat=SimpleNamespace(id=uid, type="private", title=""), message=msg,
@@ -41,60 +41,64 @@ def _ctx(stack, args=None):
 
 async def test_start_help_about_are_honest_and_hinglish(stack):
     m = Msg(); await start.start(_upd(1, m), _ctx(stack))
-    assert "Ria" in m.replies[0] and "AI" not in m.replies[0]
+    assert "Ria" in m.replies[0] and "AI" not in m.replies[0] and m.reply_kwargs[0]["parse_mode"] == "HTML"
+    assert "<blockquote>" in m.replies[0] and "Streak" in m.replies[0]
     m = Msg(); await start.help_cmd(_upd(1, m), _ctx(stack))
-    for cmd in ("/start", "/help", "/reset", "/memory", "/forget", "/language", "/settings", "/about"):
-        assert cmd in m.replies[0]
+    assert "/start" in m.replies[0] and "/forget" not in m.replies[0]
     m = Msg(); await start.about(_upd(1, m), _ctx(stack))
-    assert "Ria" in m.replies[0] and "AI chat companion" in m.replies[0] and "insaan nahi" in m.replies[0]
+    assert "AI chat companion" in m.replies[0] and "insaan nahi" in m.replies[0] and "Privacy" in m.replies[0]
     assert "Gemma" not in m.replies[0]
 
 
-async def test_memory_list_delete_edit_add(stack):
+async def test_memory_command_is_read_only_and_isolated(stack):
     await stack.ctx.memories.upsert(1, "Likes cricket"); await stack.ctx.memories.upsert(2, "Other user's fact")
     m = Msg(); await commands.memory(_upd(1, m), _ctx(stack))
     assert "Likes cricket" in m.replies[0] and "Other user" not in m.replies[0]
-    m = Msg(); await commands.memory(_upd(1, m), _ctx(stack, ["edit", "1", "Loves", "chai"]))
-    assert (await stack.ctx.memories.top_texts(1, 5)) == ["Loves chai"]
-    m = Msg(); await commands.memory(_upd(1, m), _ctx(stack, ["add", "my", "password", "is", "abc"]))
-    assert "yaad nahi rakhungi" in m.replies[0]
-    m = Msg(); await commands.memory(_upd(1, m), _ctx(stack, ["delete", "1"]))
-    assert await stack.ctx.memories.count(1) == 0 and await stack.ctx.memories.count(2) == 1
-    m = Msg(); await commands.memory(_upd(1, m), _ctx(stack))
-    assert "kuch khaas yaad nahi" in m.replies[0]
+    m = Msg(); await commands.memory(_upd(1, m), _ctx(stack, ["delete", "1"]))      # no delete any more
+    assert await stack.ctx.memories.count(1) == 1
 
 
-async def test_forget_requires_confirmation_then_deletes_only_caller(stack):
-    stack.queue.start()
-    await stack.engine.chat(1, "hello", "telegram"); await stack.engine.chat(2, "hello", "telegram")
-    await stack.ctx.memories.upsert(1, "Likes tea")
-    m = Msg(); await commands.forget(_upd(1, m), _ctx(stack))
-    assert await stack.ctx.conversations.count(1) == 2          # nothing deleted yet
-    u = _upd(1, None, data="forget:no"); await commands.on_callback(u, _ctx(stack))
-    assert await stack.ctx.conversations.count(1) == 2
-    u = _upd(1, None, data="forget:yes"); await commands.on_callback(u, _ctx(stack))
-    assert await stack.ctx.conversations.count(1) == 0 and await stack.ctx.memories.count(1) == 0
-    assert await stack.ctx.users.get(1) is None and await stack.ctx.conversations.count(2) == 2
-    await stack.queue.shutdown(1)
+def test_users_cannot_delete_data_or_switch_memory_off_from_the_bot():
+    import inspect
+    assert not hasattr(commands, "forget") and not hasattr(commands, "reset")
+    src = inspect.getsource(commands) + inspect.getsource(start)
+    assert "forget:" not in src and "mem:off" not in src and "/forget" not in src
 
 
-async def test_reset_language_settings_name_link(stack):
-    stack.queue.start()
-    await stack.engine.chat(1, "hello", "telegram")
-    m = Msg(); await commands.reset(_upd(1, m), _ctx(stack))
-    assert await stack.ctx.conversations.count(1) == 0
+async def test_menu_buttons_cover_settings_games_memories_link(stack):
+    await stack.ctx.users.get_or_create(1, "Asha")
+    await stack.ctx.memories.upsert(1, "Likes chai")
+    async def press(data):
+        u = _upd(1, None, data=data); await start.start_callback(u, _ctx(stack)); return u.callback_query.edits[-1]
+    assert "Settings" in await press("st:settings")
+    assert "English" in await press("st:lang:english") and (await stack.ctx.users.get(1))["language"] == "english"
+    await press("st:gender:female"); assert (await stack.ctx.users.get(1))["gender"] == "female"
+    assert "naam" in await press("st:name") and stack.ctx.user_state[1] == "name"
+    assert "Likes chai" in await press("st:mem")
+    assert "Games" in await press("st:games")
+    assert "Truth" in await press("st:g:truth") and "Dare" in await press("st:g:dare")
+    assert "Web chat code" in await press("st:link")
+    assert "Privacy" in await press("st:about")
+    assert "Hieee" in await press("st:home") and 1 not in stack.ctx.user_state
+
+
+async def test_name_button_then_typing_sets_name(stack):
+    stack.ctx.user_state[1] = "name"
+    m = Msg("Rani")
+    await chat.on_text(_upd(1, m), SimpleNamespace(application=SimpleNamespace(bot_data={"ctx": stack.ctx}), bot=SimpleNamespace(username="b", id=9)))
+    assert (await stack.ctx.users.get(1))["preferred_name"] == "Rani" and "Rani" in m.replies[0]
+
+
+async def test_language_name_gender_link_commands_still_work(stack):
     await commands.on_callback(_upd(1, None, data="lang:english"), _ctx(stack))
     assert (await stack.ctx.users.get(1))["language"] == "english"
-    await commands.on_callback(_upd(1, None, data="mem:off"), _ctx(stack))
-    assert (await stack.ctx.users.get(1))["memory_enabled"] is False
     m = Msg(); await commands.settings(_upd(1, m), _ctx(stack))
-    assert "Memory: OFF" in m.replies[0] and "English" in m.replies[0]
+    assert "English" in m.replies[0] and "Memory" not in m.replies[0]
     m = Msg(); await commands.name(_upd(1, m), _ctx(stack, ["Rahul"]))
     assert (await stack.ctx.users.get(1))["preferred_name"] == "Rahul"
     m = Msg(); await commands.link(_upd(1, m), _ctx(stack))
     code = m.replies[0].split(": ")[1].split("\n")[0]
     assert await stack.ctx.web_auth.redeem(code)
-    await stack.queue.shutdown(1)
 
 
 async def test_health_command_is_admin_only(stack):
@@ -131,8 +135,11 @@ async def test_long_reply_is_split(stack):
     await stack.queue.shutdown(1)
 
 
-async def test_unsupported_media_gets_natural_explanation(stack):
-    for kw, needle in (({"sticker": object()}, "sticker"), ({"photo": [1]}, "images"), ({"voice": object()}, "Voice")):
+async def test_media_gets_natural_reactions(stack):
+    from app.tg.media import STICKER
+    m = Msg(sticker=SimpleNamespace(emoji="😂")); await media.on_media(_upd(1, m, uid_update=11), _ctx(stack))
+    assert m.replies[0] in STICKER and "samajh nahi" not in m.replies[0]      # reacts like a person, no "can't read stickers"
+    for kw, needle in (({"photo": [1]}, "images"), ({"voice": object()}, "Voice")):
         m = Msg(**kw); await media.on_media(_upd(1, m, uid_update=hash(needle) % 10000), _ctx(stack))
         assert m.replies and needle.lower() in m.replies[0].lower()
 
@@ -284,13 +291,13 @@ async def test_start_buttons_and_owner_button_visibility(stack):
 
     m = Msg(); await start.start(_upd(1, m), _ctx(stack))
     ls = labels(m.reply_kwargs[0]["reply_markup"])
-    assert "🍀 Ria features" in ls and "👥 Groups" in ls and "💸 Promoter" in ls and "🎮 Games" in ls
+    assert "🍀 Features" in ls and "👥 Groups" in ls and "💸 Promoter" in ls and "🎮 Games" in ls and "⚙️ Settings" in ls
     assert "👑 Owner panel" not in ls                                  # stranger
     m = Msg(); await start.start(_upd(5, m), _ctx(stack))
     assert "👑 Owner panel" not in labels(m.reply_kwargs[0]["reply_markup"])   # admin: no owner panel
     m = Msg(); await start.start(_upd(42, m), _ctx(stack))
     assert "👑 Owner panel" in labels(m.reply_kwargs[0]["reply_markup"])       # owner
-    assert "Messages:" in m.replies[0] and "Memories:" in m.replies[0]
+    assert "Chats:" in m.replies[0] and "Yaadein:" in m.replies[0]
 
 
 async def test_admin_cannot_open_owner_panel(stack):
@@ -303,7 +310,7 @@ async def test_start_callbacks_navigate(stack):
     u = _upd(1, None, data="st:features"); await start.start_callback(u, _ctx(stack))
     assert "Ria kya kya" in u.callback_query.edits[0]
     u = _upd(1, None, data="st:back"); await start.start_callback(u, _ctx(stack))
-    assert "Messages:" in u.callback_query.edits[0]
+    assert "Chats:" in u.callback_query.edits[0]
 
 
 # ---------------------------------------------------------------- secretary mode (Telegram Business)
@@ -316,8 +323,8 @@ class _BizBot:
     async def read_business_message(self, **kw): self.read.append(kw)
 
 
-def _biz_update(sender_id, text, cid="c1", uid_update=1):
-    m = SimpleNamespace(text=text, business_connection_id=cid, chat=SimpleNamespace(id=sender_id),
+def _biz_update(sender_id, text, cid="c1", uid_update=1, chat_id=None):
+    m = SimpleNamespace(text=text, business_connection_id=cid, chat=SimpleNamespace(id=chat_id or sender_id),
                         from_user=SimpleNamespace(id=sender_id, first_name="Riya", username="r", is_bot=False),
                         message_id=5)
     return SimpleNamespace(business_message=m, update_id=uid_update)
@@ -331,33 +338,53 @@ async def _run_biz(stack, upd, bot):
         await business.on_business_message(upd, ctx)
 
 
-async def test_secretary_replies_in_business_chat_and_marks_read(stack):
+async def test_secretary_introduces_then_answers_as_assistant_and_notifies_owner(stack):
     stack.queue.start()
-    await stack.ctx.business.upsert("c1", 900, "Aakash", True, True)
+    await stack.ctx.business.upsert("c1", 900, "AAKASH", True, True)
     bot = _BizBot()
-    await _run_biz(stack, _biz_update(55, "hi kaha ho"), bot)
-    assert len(bot.sent) == 1 and bot.sent[0]["business_connection_id"] == "c1" and bot.sent[0]["chat_id"] == 55
-    assert bot.read and "SECRETARY MODE" in stack.local.calls[0][0]["content"]
+    await _run_biz(stack, _biz_update(55, "Aakash kha ho", uid_update=1), bot)
+    chat_msgs = [s for s in bot.sent if s["chat_id"] == 55]
+    assert len(chat_msgs) == 1 and "Ria" in chat_msgs[0]["text"] and "Aakash" in chat_msgs[0]["text"]
+    assert chat_msgs[0]["business_connection_id"] == "c1" and not stack.local.calls   # intro needs no model call
+    assert any(s["chat_id"] == 900 and "Aakash kha ho" in s["text"] for s in bot.sent)   # owner notified
+    await _run_biz(stack, _biz_update(55, "Tum aakash ho na", uid_update=2), bot)
+    chat_msgs = [s for s in bot.sent if s["chat_id"] == 55]
+    assert len(chat_msgs) == 2 and bot.read
+    system = stack.local.calls[0][0]["content"]
+    assert "AAKASH" in system.upper() and "NOT" in system and "assistant" in system
+    await stack.queue.shutdown(1)
+
+
+async def test_secretary_never_sends_error_texts_to_the_other_person(stack):
+    from app.ai.errors import AIUnavailable
+    stack.queue.start()
+    await stack.ctx.business.upsert("c1", 900, "AAKASH", True, True)
+    bot = _BizBot()
+    await _run_biz(stack, _biz_update(55, "hi", uid_update=1), bot)           # intro
+    stack.local.script = [AIUnavailable("down")] * 3
+    before = len([s for s in bot.sent if s["chat_id"] == 55])
+    await _run_biz(stack, _biz_update(55, "hello?", uid_update=2), bot)
+    assert len([s for s in bot.sent if s["chat_id"] == 55]) == before         # silent on failure
     await stack.queue.shutdown(1)
 
 
 async def test_secretary_respects_switches_owner_takeover_and_permissions(stack):
     stack.queue.start()
     stack.ctx.runtime.ttl = 0
-    await stack.ctx.business.upsert("c1", 900, "Aakash", True, True)
+    await stack.ctx.business.upsert("c1", 900, "AAKASH", True, True)
     bot = _BizBot()
-    await _run_biz(stack, _biz_update(900, "main khud reply kar raha hu", uid_update=2), bot)   # owner writes
-    await _run_biz(stack, _biz_update(900, "hello", uid_update=3), bot)
-    assert bot.sent == []
+    await _run_biz(stack, _biz_update(900, "main khud reply kar raha hu", uid_update=2, chat_id=55), bot)   # owner writes
+    await _run_biz(stack, _biz_update(55, "hello", uid_update=3), bot)
+    assert not [s for s in bot.sent if s["chat_id"] == 55]
     stack.ctx.secretary_pause.clear()
     await stack.ctx.runtime.set("secretary_enabled", False)
     await _run_biz(stack, _biz_update(55, "hi", uid_update=4), bot)
-    assert bot.sent == []
+    assert not [s for s in bot.sent if s["chat_id"] == 55]
     await stack.ctx.runtime.set("secretary_enabled", True)
-    await stack.ctx.business.upsert("c1", 900, "Aakash", False, True)                          # no reply permission
+    await stack.ctx.business.upsert("c1", 900, "AAKASH", False, True)                          # no reply permission
     await _run_biz(stack, _biz_update(55, "hi", uid_update=5), bot)
-    assert bot.sent == []
-    await stack.ctx.business.upsert("c1", 900, "Aakash", True, False)                          # connection disabled
+    assert not [s for s in bot.sent if s["chat_id"] == 55]
+    await stack.ctx.business.upsert("c1", 900, "AAKASH", True, False)                          # connection disabled
     await _run_biz(stack, _biz_update(55, "hi", uid_update=6), bot)
-    assert bot.sent == []
+    assert not [s for s in bot.sent if s["chat_id"] == 55]
     await stack.queue.shutdown(1)

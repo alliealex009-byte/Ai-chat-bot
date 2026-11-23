@@ -17,6 +17,8 @@ def _match(doc: dict, flt: dict) -> bool:
             for op, arg in cond.items():
                 if op == "$lt" and not (v is not None and v < arg):
                     return False
+                if op == "$gt" and not (v is not None and v > arg):
+                    return False
                 if op == "$in" and v not in arg:
                     return False
                 if op == "$ne" and v == arg:
