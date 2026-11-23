@@ -59,5 +59,11 @@ class ConversationRepo:
         res = await self.col.delete_many({"ts": {"$lt": cutoff}})
         return res.deleted_count
 
+    async def export_dm(self, limit: int = 200000, max_user_id: int = 10**12) -> list[dict]:
+        """All private-chat messages (user ids only; groups and business chats are excluded), oldest first."""
+        flt = {"user_id": {"$gt": 0}}
+        docs = await self.col.find(flt).sort("ts", 1).limit(limit).to_list(length=limit)
+        return [d for d in docs if d["user_id"] < max_user_id]
+
     async def total(self) -> int:
         return await self.col.count_documents({})
