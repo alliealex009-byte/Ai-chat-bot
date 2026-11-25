@@ -69,6 +69,9 @@ class UserRepo:
     async def reset_summary_counter(self, user_id: int) -> None:
         await self.col.update_one({"_id": user_id}, {"$set": {"msgs_since_summary": 0}})
 
+    async def set_region(self, user_id: int, region: Optional[str]) -> None:
+        await self.col.update_one({"_id": user_id}, {"$set": {"region": region}})
+
     async def touch_streak(self, user_id: int) -> int:
         """Consecutive-days chat streak (India time). Returns the current streak."""
         from datetime import timedelta
