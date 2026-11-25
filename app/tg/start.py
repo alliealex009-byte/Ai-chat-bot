@@ -26,7 +26,7 @@ ABOUT_TEXT = (
     "Main Ria hu 💗 19, Delhi vibes, college, chai aur gossip.\n"
     "Waise honesty se: main ek AI chat companion hu, insaan nahi — par masti poori real hai 😄\n\n"
     "🔒 Privacy: tumhari chat aur yaadein secure database mein store hoti hain taaki main tumhe yaad rakh sakun "
-    "aur waqt ke saath behtar ban sakun. Kuch hatwana ho toh owner se kaho."
+    "aur waqt ke saath behtar ban sakun. Photos save nahi hoti, bas unpe meri reaction yaad rehti hai. Kuch hatwana ho toh owner se kaho."
 )
 
 FEATURES_TEXT = (

@@ -1,6 +1,7 @@
 """Text messages: DMs always; groups only when someone says "Ria", @tags the bot, or replies to Ria."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import ReplyParameters, Update
@@ -9,6 +10,7 @@ from telegram.ext import ContextTypes
 from app.ai.prompts import is_sensitive
 from app.services.limiter import SlidingWindowLimiter
 from app.services.triggers import should_respond_in_group, strip_mention
+from app.humanize import ALLOWED_REACTIONS, pick_reaction, split_bubbles
 from app.tg.stickers import maybe_send_sticker
 from app.tg.utils import safe_reply, typing_indicator
 
@@ -76,11 +78,28 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if ctx.settings.log_message_content:
         log.debug("msg user=%s text=%r", user.id, text[:80])
 
+    if not is_group and ctx.settings.human_reactions:  # react instantly like a person, then reply
+        emoji = pick_reaction(text)
+        if emoji in ALLOWED_REACTIONS:
+            try:
+                await msg.set_reaction(emoji)
+            except Exception:  # noqa: BLE001 - cosmetic only
+                pass
     async with typing_indicator(context.bot, chat.id):
         reply = await ctx.engine.chat(
             user.id, text, "telegram", user.first_name or "", user.username or "",
             scope=chat.id if is_group else None, group=is_group,
         )
-    await safe_reply(msg, reply.text, **reply_kwargs)
+    bubbles = [reply.text]
+    if reply.status == "ok" and not is_group and ctx.settings.human_bubbles:
+        bubbles = split_bubbles(reply.text)  # sometimes two short messages, like a person double-texting
+    await safe_reply(msg, bubbles[0], **reply_kwargs)
+    for extra in bubbles[1:]:
+        try:
+            await context.bot.send_chat_action(chat_id=chat.id, action="typing")
+        except Exception:  # noqa: BLE001 - cosmetic
+            pass
+        await asyncio.sleep(min(1.4, 0.4 + 0.025 * len(extra)))
+        await safe_reply(msg, extra)
     if reply.status == "ok":
         await maybe_send_sticker(ctx, context.bot, chat.id, reply.text, msg.message_id if is_group else None)
