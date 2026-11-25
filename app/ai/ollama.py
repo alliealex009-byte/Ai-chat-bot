@@ -47,7 +47,7 @@ class OllamaClient:
             "num_predict": max_tokens,
             "num_ctx": self.s.ai_context_length,
             "num_thread": self.s.ai_num_threads,
-            "repeat_penalty": 1.1,
+            "repeat_penalty": self.s.ai_repeat_penalty,
         }
 
     async def chat(

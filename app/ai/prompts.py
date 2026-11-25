@@ -158,9 +158,34 @@ def _trim_short(text: str, max_sentences: int = 2, max_chars: int = 220) -> str:
     return out.strip()
 
 
-def polish_reply(text: str, long_form: bool = False, group: bool = False) -> str:
+_STIFF = [
+    (r"\bkripya\s*", ""), (r"\bdhanyavaad\b|\bdhanyawad\b", "thanks"), (r"\bnamaste\b", "heyy"),
+    (r"\baapko\b", "tumhe"), (r"\baapka\b", "tumhara"), (r"\baapki\b", "tumhari"), (r"\baapke\b", "tumhare"),
+    (r"\baap\b", "tum"), (r"\bsuniye\b", "suno"), (r"\bbataiye\b", "batao"), (r"\bkijiye\b", "karo"),
+    (r"\bkariye\b", "karo"), (r"\bboliye\b", "bolo"), (r"\bhaan ji\b", "haan"),
+]
+_STIFF_RE = [(re.compile(p, re.IGNORECASE), r) for p, r in _STIFF]
+_SERVICE_SENT = re.compile(r"(madad|sahayata|how can i help|of course|certainly|kuch aur chahiye|assist)", re.IGNORECASE)
+
+
+def casualize(text: str) -> str:
+    """Friends don't talk like a help desk: drop service-desk sentences and swap formal words for casual ones."""
+    lines = []
+    for line in text.strip().split("\n"):  # keep line breaks (long answers)
+        parts = re.split(r"(?<=[.!?])\s+", line.strip())
+        kept = [p for p in parts if not _SERVICE_SENT.search(p)]
+        lines.append(" ".join(kept) if kept else line)
+    text = "\n".join(lines)
+    for rx, repl in _STIFF_RE:
+        text = rx.sub(lambda m, r=repl: (r[:1].upper() + r[1:]) if r and m.group(0)[:1].isupper() else r, text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def polish_reply(text: str, long_form: bool = False, group: bool = False, formal: bool = False) -> str:
     """Make a model reply look like Ria texting: no stage directions, feminine grammar, few emojis, short."""
     text = _STAGE_RE.sub("", text or "")
+    if not formal:
+        text = casualize(text)
     for rx, repl in _FEM_RE:
         text = rx.sub(repl, text)
     text = _limit_emojis(text, 3 if long_form else 2)

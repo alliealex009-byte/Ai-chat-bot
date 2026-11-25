@@ -64,6 +64,14 @@ class AIRouter:
             return result
         raise last
 
+    async def chat_local(self, messages: list[dict], max_tokens: Optional[int] = None,
+                         temperature: Optional[float] = None) -> ChatResult:
+        """Local Ollama only (used for photo messages: the fallback providers get no images)."""
+        result = await self.ollama.chat(messages, max_tokens=max_tokens, temperature=temperature)
+        self.counts[result.provider] += 1
+        self._record(result)
+        return result
+
     def _record(self, r: ChatResult) -> None:
         self.latencies.append(r.latency_ms)
         del self.latencies[:-200]
