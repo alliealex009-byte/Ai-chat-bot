@@ -291,7 +291,7 @@ RIA is a *fictional AI persona*: she's told never to claim a body, real-life exp
 
 ## 13. v2 — Ria's personality, groups, stickers, owner panel
 
-**Personality.** Ria is a 19-year-old Delhi college girl: very short Gen-Z Hinglish (3–12 words), feminine grammar, 0–2 fitting emojis,
+**Personality.** Ria is a 20-year-old Delhi college girl: very short Gen-Z Hinglish (3–12 words), feminine grammar, 0–2 fitting emojis,
 light flirty/teasing within limits (no abuse, no sexual talk — she deflects playfully, e.g. "hehe itni jaldi? pehle dost toh ban jao 😏"),
 no flirting if someone says they're under 18. She never brings up AI/bot/tech on her own: every reply is filtered (stage directions like "(giggles)" removed,
 masculine verbs fixed, replies trimmed, "AI/digital/virtual" talk retried once then stripped). Tech questions ("kaun sa API?") get a playful "mujhe tech samajh nahi aata".
@@ -376,6 +376,49 @@ sudo sed -i 's/^CONVERSATION_RETENTION_DAYS=.*/CONVERSATION_RETENTION_DAYS=0/; s
 grep -q '^SECRETARY_NOTIFY_OWNER=' .env || echo 'SECRETARY_NOTIFY_OWNER=true' | sudo tee -a .env >/dev/null
 git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate && sudo systemctl restart ria
 ```
+
+**v3 "human touch" (persona + texting layer).**
+- *Character bible:* Ria now has a consistent life (2nd-year BA at a DU college, Rajouri Garden, mummy/papa/little brother Chintu, best friend Simran, chai/momos/Arijit/K-dramas, moods and opinions) and texts messy and casual, mirroring the user's length and energy.
+- *Time-aware:* she knows if it's morning, college hours, evening or late night in India and acts accordingly (hour-level text so the prompt prefix stays cacheable = faster).
+- *Mood-aware:* sad/stressed user → no jokes, soft and present; good news → properly excited; dry replies (hmm/acha) → she teases instead of echoing; angry user → calm, short.
+- *Relevant examples only:* ~35 example exchanges in `app/humanize.py` (BANK); just the 4-5 that match the message are sent, so replies stay fast and in style. Add your own lines there to tune her voice.
+- *Anti-robot polish:* no question at the end of two messages in a row, no same opener twice (arre/haha), one retry if she repeats her last message, sometimes two short bubbles (double-texting). `HUMAN_BUBBLES=false` turns bubbles off.
+- *Sampling:* temperature 0.8, top_p 0.92, repeat_penalty 1.15, context 4096, history budget 2400 chars.
+- *Secretary mode* uses the same polish and a "real polite person, not customer service" prompt.
+- Still honest: she never brings up AI herself, but never denies it when sincerely asked.
+Update an existing `.env`:
+
+```bash
+cd /opt/ria
+sudo sed -i 's/^AI_TEMPERATURE=.*/AI_TEMPERATURE=0.8/; s/^AI_TOP_P=.*/AI_TOP_P=0.92/; s/^AI_CONTEXT_LENGTH=.*/AI_CONTEXT_LENGTH=4096/; s/^HISTORY_CHAR_BUDGET=.*/HISTORY_CHAR_BUDGET=2400/' .env
+grep -q '^AI_REPEAT_PENALTY=' .env || printf 'AI_REPEAT_PENALTY=1.15\nHUMAN_BUBBLES=true\n' | sudo tee -a .env >/dev/null
+git pull --ff-only && source venv/bin/activate && pip install -r requirements.txt && deactivate && sudo systemctl restart ria
+python scripts/try_chat.py   # chat with her in the terminal and judge the voice before going live
+```
+
+**v3.1 "desi" polish (Hindi belt).**
+- *Desi world:* Ria is Delhi-NCR with roots in UP and knows the Hindi belt: chaat, litti-chokha, poha-jalebi, dal-baati, parathe, Diwali/Holi/Rakhi/Karwa Chauth/Chhath/Navratri, cricket + IPL, Bollywood, board exams and UPSC/sarkari-naukri pressure, mummy ki daant, rishta aunties, kohra/loo/barish. Light touch only.
+- *Calendar-aware (`app/culture.py`):* season (kohra, loo, monsoon), festivals (lead-up and "was yesterday"), IPL and exam season. Lunar-calendar dates for 2026-27 are approximate (+/-1 day); update the `MOVING` list once a year.
+- *Region-aware:* when someone says "main Patna se hu / Lucknow se hu / Jaipur mein rehta hu" she remembers it and warmly mentions one local thing (Bihar/Jharkhand, UP, MP/CG, Rajasthan, Haryana/Punjab, Delhi-NCR, Uttarakhand/Himachal). No accent mimicry, no stereotypes.
+- *Devanagari in, Roman out:* if the user types in Hindi script she understands and answers in Roman Hinglish.
+- *Bigger example bank:* ~65 example exchanges across 40 topics (cricket, Bollywood, festivals, family, weather, career, shaadi pressure, friends, travel, region...). Safety examples (flirt/explicit/abuse) always take priority.
+- *Help-desk filter:* "aap/kripya/dhanyavaad", "main aapki kya madad kar sakti hu" and similar stiff phrases are rewritten or dropped for friend chats (the Secretary stays polite and keeps "aap").
+- *Train / polish loop (on your VPS):* `python scripts/persona_eval.py` runs ~60 scenarios through your real Gemma and flags problems (AI-talk, English, gender slips, formal tone, repeats, question streaks, Devanagari) with a pass rate; edit `app/personality.py` or the `BANK` in `app/humanize.py`, rerun, compare. `--only cricket,sad` runs groups; `--seed` writes `data/ria_seed.jsonl` from the example bank for GPU fine-tuning. Gemma's weights are not trained by this: tuning means better prompts and examples (and, if you want, a fine-tune on a GPU machine using the 📦 Export data file plus the seed).
+
+**v4 "ultimate" (life, closeness, photos, reactions).**
+- *She has a day:* `app/life.py` knows what a 20-year-old DU girl is doing at this hour on this weekday (waking up to mummy's shouting, Yellow Line metro, bunking lectures, canteen chole-kulche with Simran, Kamla Nagar momos, Sarojini/Hauz Khas on weekends, Sunday scaries, 3am reels). It is hour-stable so Ollama can cache the prompt.
+- *She shares small life moments* every few messages (an aunty fighting for a metro seat, Chintu hiding her charger, 150-rupee kurti at Sarojini...) so she isn't only asking questions.
+- *Closeness grows:* just met -> becoming friends -> close friends -> best-friend level (by message count/streak): more teasing, inside jokes and caring check-ins over time.
+- *Delhi and college knowledge on demand:* places (Hauz Khas, Sarojini, Kamla Nagar, CP, Chandni Chowk...), metro/auto life, DU (attendance, internals, proxy, societies, CUET), street food, fashion, skincare (no medical advice), friend/relationship advice, Insta life.
+- *Gen-Z texting:* lowkey, highkey, fr, ngl, tbh, idk, ig, red flag, situationship + okkk/hnn/achaaa/yrr/hayeee typing habits. Age is now 20 (edit `PERSONA` to change).
+- *Photos:* send her a pic (food, outfit, selfie, trip) and she reacts like a friend using Gemma 3 vision on your Ollama (local only; the image is never stored; she never identifies people from faces; explicit pics get a clear, cute no). `VISION_ENABLED=false` turns it off. Photos can make that reply slower on CPU.
+- *Instant emoji reactions* on your message (hug when you're sad, party on good news, laughing on jokes), rarely and only valid Telegram reactions. `HUMAN_REACTIONS=false` turns it off.
+- *Not included:* voice notes. Understanding or sending voice needs speech-to-text/text-to-speech engines that are not on your VPS; she still asks for text.
+
+**v4.1 emoji and sticker understanding (`app/emoji.py`).**
+- *Emojis:* ~120 emojis are translated into a short Hinglish meaning plus mood for the model (😂 laughing, 🥺 pleading, 😏 teasing, 🙄 irritated, 💔 heartbroken; Gen-Z aware: 😭 and 💀 often mean laughing). Emoji-only messages ("🥺", "😂😂") get an answer to the feeling behind them. Emoji also drive mood detection (💔 = sad, 🎉 = happy) when the text says nothing.
+- *Stickers:* every Telegram sticker carries an emoji and a pack name; Ria reads those, so she answers a sticker contextually through the model (not a canned line) and sometimes sends a sticker back. If the model is busy or down she falls back to a short canned reaction.
+- *Limits (honest):* she understands a sticker by its emoji and pack name, not by looking at the drawing, so a sticker whose emoji does not match its picture can be misread. Looking at the picture would need an image conversion step and a slow vision call per sticker. Photos (not stickers) do use Gemma vision. Sticker and photo placeholders are never turned into memories.
 
 ## License
 MIT (see `LICENSE`).
