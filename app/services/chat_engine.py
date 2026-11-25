@@ -20,8 +20,12 @@ from app.database.conversations import ConversationRepo
 from app.database.memories import MemoryRepo
 from app.database.users import UserRepo
 from app.database.web import WebAuthRepo
-from app.personality import (FEWSHOT, HINT_HINDI, HINT_NO_AI, HINT_SINCERE_AI, HINT_TECH, asks_about_tech,
+from app.personality import (FEWSHOT, HINT_HINDI, HINT_NO_AI, HINT_SINCERE_AI, HINT_PHOTO, HINT_TECH, HINT_VARY, asks_about_tech,
                              build_secretary_prompt, canned_ai_answer, guess_gender, build_system_prompt, detect_gender, detect_name, FEWSHOT_SECRETARY, is_asking_if_ai, wants_long_answer)
+from app.culture import HINT_DEVANAGARI, culture_context, detect_region, has_devanagari, region_hint
+from app.life import activity_line, closeness_hint, life_moment, topic_knowledge
+from app.emoji import HINT_STICKER, emoji_hint
+from app.humanize import humanize, mood_hint, now_context, select_fewshot, too_similar
 from app.services.memory import MemoryService
 from app.services.queue import InferenceQueue, QueueClosed, QueueFull, QueueTimeout, UserBusy
 
@@ -65,7 +69,8 @@ class ChatEngine:
     # -- chat --------------------------------------------------------------
     async def chat(self, user_id: int, text: str, channel: str = "telegram", first_name: str = "",
                    username: str = "", scope: Optional[int] = None, group: bool = False,
-                   hints: tuple | list = (), secretary_owner: Optional[str] = None) -> ChatReply:
+                   hints: tuple | list = (), secretary_owner: Optional[str] = None,
+                   images: Optional[list] = None) -> ChatReply:
         """`scope` = conversation key (group chat id); defaults to the user's own DM conversation."""
         text = sanitize_user_text(text, self.s.max_input_chars)
         if not text:
@@ -79,7 +84,7 @@ class ChatEngine:
             self.stats["injection_attempts"] += 1
             log.warning("Possible prompt-injection attempt user=%s", user_id)
 
-        if not group and not secretary_owner:
+        if not group and not secretary_owner and not images:
             canned = canned_ai_answer(text)
             if canned:  # honest, fixed, instant answer to a short "are you AI / which model" question
                 user = await self.users.get_or_create(user_id, first_name, username)
@@ -106,24 +111,49 @@ class ChatEngine:
             if said_name and said_name != user.get("preferred_name") and not user.get("preferred_name"):
                 await self.users.set_preferred_name(user_id, said_name)
                 user["preferred_name"] = said_name
+            said_region = detect_region(text) if not group else None
+            if said_region and said_region != user.get("region"):
+                await self.users.set_region(user_id, said_region)
+                user["region"] = said_region
             speaker = (user.get("preferred_name") or user.get("first_name") or first_name or "friend")
             history = await self.conversations.recent(hid, self.s.history_messages, self.s.history_char_budget)
             use_memory = (not group) and (not secretary_owner) and user.get("memory_enabled", True)
             memories = await self.memory_service.prompt_memories(user_id) if use_memory else []
             hints = ([HINT_SINCERE_AI] if sincere_ai else [HINT_TECH] if tech else []) + list(extra_hints)
+            if not group and (mh := mood_hint(text)):
+                hints.append(mh)
+            if not group and (rh := region_hint(user.get("region"))):
+                hints.append(rh)
+            if not group:
+                hints.extend(topic_knowledge(text))
+                hints.append(closeness_hint(user.get("message_count", 0), user.get("streak", 0)))
+                if user.get("message_count", 0) % 5 == 3 and not mood_hint(text):
+                    hints.append(life_moment(user_id + user.get("message_count", 0)))
+            if images:
+                hints.append(HINT_PHOTO)
+            if text.startswith("[sticker bheja"):
+                hints.append(HINT_STICKER)
+            if (eh := emoji_hint(text)) and not text.startswith("[sticker bheja"):
+                hints.append(eh)
+            if has_devanagari(text):
+                hints.append(HINT_DEVANAGARI)
+            prev_reply = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), None)
             system = build_system_prompt(user.get("language", self.s.default_language),
                                          None if group else speaker, memories, long_form, group, hints,
                                          user.get("gender") or guess_gender(first_name or user.get("first_name", "")),
-                                         (user.get("summary") if use_memory else None))
+                                         (user.get("summary") if use_memory else None), now_context() + " " + culture_context() + " " + activity_line())
             user_content = f"[{speaker}]: {text}" if group else text
-            shots = FEWSHOT
+            shots = select_fewshot(text)
             if secretary_owner:  # answering in the account owner's chat: assistant role, not the friend persona
                 system = build_secretary_prompt(secretary_owner, speaker, user.get("language", self.s.default_language))
                 shots = FEWSHOT_SECRETARY
-            messages = [{"role": "system", "content": system}, *shots, *history,
-                        {"role": "user", "content": user_content}]
+            last_user = {"role": "user", "content": user_content}
+            if images:
+                last_user["images"] = list(images)
+            call = self.router.chat_local if images else self.router.chat
+            messages = [{"role": "system", "content": system}, *shots, *history, last_user]
             tokens = self.s.ai_max_tokens_long if long_form else self.s.ai_max_tokens
-            result = await self.router.chat(messages, max_tokens=tokens)
+            result = await call(messages, max_tokens=tokens)
             reply = result.text
 
             retry_hints = []
@@ -133,17 +163,21 @@ class ChatEngine:
             if not long_form and looks_english(reply):  # must text in Hinglish, not English
                 self.stats["language_retries"] += 1
                 retry_hints.append(HINT_HINDI)
+            if prev_reply and not long_form and len(reply) >= 15 and too_similar(reply, prev_reply):  # she repeated herself
+                retry_hints.append(HINT_VARY)
             if retry_hints:  # one corrective retry, slightly cooler
                 messages[0] = {"role": "system", "content": system + "\n\n" + "\n".join(retry_hints)}
                 try:
-                    retry = await self.router.chat(messages, max_tokens=tokens, temperature=0.6)
+                    retry = await call(messages, max_tokens=tokens, temperature=0.6)
                     reply, result = retry.text, retry
                 except AIError:
                     pass
             if not sincere_ai and mentions_ai(reply):
                 reply = strip_ai_sentences(reply) or fallback_line()
 
-            reply = polish_reply(reply, long_form=long_form, group=group) or fallback_line()
+            reply = polish_reply(reply, long_form=long_form, group=group, formal=bool(secretary_owner)) or fallback_line()
+            if not long_form:
+                reply = humanize(reply, prev_reply) or reply
             await self.conversations.add(hid, "user", user_content, channel)
             await self.conversations.add(hid, "assistant", reply, channel)
             await self.users.bump_counters(user_id)

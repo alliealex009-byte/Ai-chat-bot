@@ -97,7 +97,8 @@ class MemoryService:
         n = self.s.memory_extract_every_n_messages * 2
         recent = await self.conversations.last_n_text(user_id, n)
         # Only what the USER said: RIA's own lines are never turned into facts about the user.
-        user_lines = [m["content"] for m in recent if m["role"] == "user" and not is_sensitive(m["content"])]
+        user_lines = [m["content"] for m in recent if m["role"] == "user" and not is_sensitive(m["content"])
+                      and not m["content"].startswith(("[sticker", "(photo"))]
         if not user_lines:
             await self.users.reset_extract_counter(user_id)
             return 0
