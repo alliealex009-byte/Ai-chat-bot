@@ -14,6 +14,10 @@ class Msg:
         self.message_id, self.reply_to_message, self.reply_kwargs = 77, kw.get("reply_to_message"), []
         self.sticker = kw.get("sticker"); self.photo = kw.get("photo"); self.voice = kw.get("voice")
         self.audio = self.video_note = None
+        self.caption = kw.get("caption"); self.reacted = []
+
+    async def set_reaction(self, reaction):
+        self.reacted.append(reaction)
 
     async def reply_text(self, text, **kw):
         self.replies.append(text)
@@ -137,11 +141,74 @@ async def test_long_reply_is_split(stack):
 
 async def test_media_gets_natural_reactions(stack):
     from app.tg.media import STICKER
-    m = Msg(sticker=SimpleNamespace(emoji="😂")); await media.on_media(_upd(1, m, uid_update=11), _ctx(stack))
-    assert m.replies[0] in STICKER and "samajh nahi" not in m.replies[0]      # reacts like a person, no "can't read stickers"
+    stack.settings.vision_enabled = False
     for kw, needle in (({"photo": [1]}, "images"), ({"voice": object()}, "Voice")):
         m = Msg(**kw); await media.on_media(_upd(1, m, uid_update=hash(needle) % 10000), _ctx(stack))
         assert m.replies and needle.lower() in m.replies[0].lower()
+
+
+async def test_sticker_is_understood_via_its_emoji_and_answered_by_the_model(stack):
+    stack.queue.start()
+    stack.local.script = ["hahaha kya hua itna kyun hans rahe ho 😂"]
+    m = Msg(sticker=SimpleNamespace(emoji="😂", set_name="CatMemes"))
+    await media.on_media(_upd(1, m, uid_update=11), _ctx(stack))
+    assert m.replies[0].startswith("hahaha")
+    last = stack.local.calls[0][-1]["content"]
+    assert last.startswith("[sticker bheja:") and "😂" in last and "CatMemes" in last
+    assert "STICKER" in stack.local.calls[0][0]["content"] and "EMOJI MEANINGS" not in stack.local.calls[0][0]["content"]
+    await stack.queue.shutdown(1)
+
+
+async def test_sticker_falls_back_to_a_canned_reaction_when_the_model_is_down(stack):
+    from app.ai.errors import AIUnavailable
+    from app.tg.media import STICKER
+    stack.queue.start()
+    stack.local.script = [AIUnavailable("down")] * 4
+    m = Msg(sticker=SimpleNamespace(emoji="😂", set_name=""))
+    await media.on_media(_upd(1, m, uid_update=12), _ctx(stack))
+    assert m.replies[0] in STICKER
+    await stack.queue.shutdown(1)
+
+
+async def test_photo_is_understood_by_local_vision_and_never_stored(stack):
+    import base64
+    stack.queue.start()
+    stack.local.script = ["arre waah, ye kahan ki pic hai? 😍"]
+    class F:
+        async def download_as_bytearray(self): return bytearray(b"\x89PNGfakeimage")
+    async def get_file(fid): return F()
+    ctx = _ctx(stack); ctx.bot.get_file = get_file
+    photo = [SimpleNamespace(file_id="a", file_size=100, width=90, height=90), SimpleNamespace(file_id="b", file_size=900, width=800, height=600)]
+    m = Msg(photo=photo, caption="Meri trip ki pic")
+    await media.on_media(_upd(1, m, uid_update=21), ctx)
+    assert m.replies == ["arre waah, ye kahan ki pic hai? 😍"]
+    last = stack.local.calls[0][-1]
+    assert last["content"] == "Meri trip ki pic" and last["images"] == [base64.b64encode(b"\x89PNGfakeimage").decode()]
+    assert "sent you a photo" in stack.local.calls[0][0]["content"]
+    stored = [d["content"] for d in stack.db.messages.docs]
+    assert "Meri trip ki pic" in stored and not any("PNGfake" in c or "iVBOR" in c for c in stored)   # image bytes not saved
+    await stack.queue.shutdown(1)
+
+
+async def test_photo_falls_back_to_text_when_download_fails(stack):
+    ctx = _ctx(stack)
+    async def boom(fid): raise RuntimeError("net")
+    ctx.bot.get_file = boom
+    m = Msg(photo=[SimpleNamespace(file_id="a", file_size=10, width=10, height=10)])
+    await media.on_media(_upd(1, m, uid_update=22), ctx)
+    assert "images" in m.replies[0].lower()
+
+
+async def test_sad_message_gets_an_instant_emoji_reaction(stack):
+    import random
+    from app import humanize
+    stack.queue.start()
+    random.seed(1)
+    humanize.pick_reaction = lambda text, rng=None: "🤗"     # force: reaction logic itself is tested in test_humanize
+    chat.pick_reaction = humanize.pick_reaction
+    m = Msg("mood off hai yaar"); await chat.on_text(_upd(1, m, uid_update=31), _ctx(stack))
+    assert m.reacted == ["🤗"] and m.replies
+    await stack.queue.shutdown(1)
 
 
 # ---------------------------------------------------------------- groups

@@ -5,7 +5,7 @@ from app.personality import (FEWSHOT, asks_about_tech, build_system_prompt, is_a
 
 def test_persona_is_ria_19_delhi_gen_z_short():
     p = build_system_prompt("hinglish")
-    for must in ("Ria", "19-year-old", "Delhi", "Gen-Z", "Short: one or two lines", "5-15 words", "girl", "yaar"):
+    for must in ("Ria", "20-year-old", "Delhi", "Gen-Z", "Usually 4-14 words", "girl", "yaar", "Rajouri Garden", "Do NOT end every message with a question"):
         assert must in p, must
     assert "beta" in p and "Don't say beta or sir" in p
 
@@ -118,9 +118,9 @@ def test_gender_detection_only_when_user_says_it():
 
 def test_prompt_grammar_rules_prevent_you_vs_user_mixups():
     p = build_system_prompt()
-    assert "NEVER" in p and "kya kar rahi hu tum" in p and "tum kya kar rahe ho" in p
-    assert "nhi=nahi" in p and "kya matlab? clear batao na" in p and "boring replies" in p
-    assert "80% of your words must be Hindi" in p and "NEVER write a full English sentence" in p
+    assert "NEVER" in p and "kya kar rahi hu tum" in p and "gender note" in p
+    assert "nhi=nahi" in p and "kya matlab? clear batao na" in p and "Dry replies" in p
+    assert "At least 80% Hindi words" in p and "Never write a full English sentence" in p
 
 
 def test_looks_english_flags_english_but_not_hinglish():

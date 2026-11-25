@@ -15,7 +15,7 @@ async def test_chat_roundtrip_saves_history_and_uses_persona(stack):
     assert r.status == "ok" and r.provider == "ollama" and r.model == "gemma3:4b"
     sent = stack.local.calls[0]
     assert sent[0]["role"] == "system" and "Ria" in sent[0]["content"] and sent[-1] == {"role": "user", "content": "Hi"}
-    assert any(m["content"] == "Kiss kro ge" for m in sent)   # few-shot style examples are included
+    assert len(sent) > 2 and sent[1]["role"] == "user" and sent[2]["role"] == "assistant"   # relevant style examples are included
     assert [m["role"] for m in await stack.ctx.conversations.last_n_text(1, 10)] == ["user", "assistant"]
     await stack.queue.shutdown(1)
 
@@ -264,7 +264,7 @@ async def test_transcript_from_real_chat_gets_right_context(stack):
     system = last[0]["content"]
     assert "user is a BOY" in system and "never mix these up" in system and "don't echo them" in system
     convo = [m["content"] for m in last[1:] if m["role"] == "user"]
-    assert convo[-1] == "Acha" and "M ladka hu" in convo                          # context carried through
+    assert convo[-1] == "Acha" and "Kya bol rhe ho" in convo                          # context carried through
     await stack.queue.shutdown(1)
 
 
@@ -336,4 +336,36 @@ async def test_streak_and_name_based_gender_hint(stack):
     await stack.engine.chat(1, "hi", "telegram", "AAKASH")
     assert (await stack.ctx.users.get(1))["streak"] == 1
     assert "BOY" in stack.local.calls[0][0]["content"]       # Aakash -> masculine grammar until told otherwise
+    await stack.queue.shutdown(1)
+
+
+async def test_prompt_carries_life_closeness_topic_and_time_context(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "metro mein bahut bheed thi aaj", "telegram", "Asha")
+    system = stack.local.calls[0][0]["content"]
+    for needle in ("RIGHT NOW in India", "INDIA TODAY", "WHAT YOU ARE DOING", "RELATIONSHIP", "Rajiv Chowk"):
+        assert needle in system, needle
+    await stack.queue.shutdown(1)
+
+
+async def test_images_go_only_to_local_model_and_text_is_what_gets_stored(stack):
+    await _start(stack)
+    called = []
+    orig = stack.ctx.router.chat_local
+    async def spy(*a, **k):
+        called.append(1); return await orig(*a, **k)
+    stack.ctx.router.chat_local = spy
+    r = await stack.engine.chat(1, "dekho meri pic", "telegram", "Asha", images=["QUJD"])
+    assert r.status == "ok" and called and stack.local.calls[0][-1]["images"] == ["QUJD"]
+    assert all("images" not in d for d in stack.db.messages.docs)
+    await stack.queue.shutdown(1)
+
+
+async def test_emoji_and_sticker_hints_and_no_memory_noise(stack):
+    await _start(stack)
+    await stack.engine.chat(1, "tum bhi na 😂💀", "telegram", "Asha")
+    assert "EMOJI MEANINGS" in stack.local.calls[0][0]["content"]
+    await stack.engine.chat(1, "[sticker bheja: ❤ = pyaar]", "telegram", "Asha")
+    s = stack.local.calls[1][0]["content"]
+    assert "STICKER" in s and "EMOJI MEANINGS" not in s
     await stack.queue.shutdown(1)
