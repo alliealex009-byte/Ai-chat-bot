@@ -35,11 +35,15 @@ class Settings(BaseModel):
     # Ollama
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "gemma3:4b"
-    ai_temperature: float = Field(0.7, ge=0.0, le=2.0)
-    ai_top_p: float = Field(0.9, gt=0.0, le=1.0)
+    ai_temperature: float = Field(0.8, ge=0.0, le=2.0)
+    ai_top_p: float = Field(0.92, gt=0.0, le=1.0)
+    ai_repeat_penalty: float = Field(1.15, ge=1.0, le=2.0)
+    vision_enabled: bool = True  # Ria can react to photos (local Gemma 3 vision; photos are never stored)
+    human_reactions: bool = True  # sometimes react to your message with an emoji
+    human_bubbles: bool = True  # sometimes send two short messages instead of one
     ai_max_tokens: int = Field(60, ge=16, le=2048)
     ai_max_tokens_long: int = Field(500, ge=16, le=4096)
-    ai_context_length: int = Field(2048, ge=512, le=32768)
+    ai_context_length: int = Field(4096, ge=512, le=32768)
     ai_num_threads: int = Field(8, ge=1, le=64)
     ollama_keep_alive: str = "30m"
     ollama_timeout_seconds: float = Field(120.0, gt=1)
@@ -70,7 +74,7 @@ class Settings(BaseModel):
 
     # Conversation / memory
     history_messages: int = Field(8, ge=2, le=60)
-    history_char_budget: int = Field(3000, ge=500)
+    history_char_budget: int = Field(2400, ge=500)
     max_input_chars: int = Field(2000, ge=50)
     conversation_retention_days: int = Field(0, ge=0)  # 0 = keep chats forever (memory + training data)
     max_stored_messages_per_user: int = Field(50000, ge=10)
@@ -214,11 +218,15 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         admin_user_ids=admins,
         ollama_base_url=_env("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
         ollama_model=_env("OLLAMA_MODEL", "gemma3:4b"),
-        ai_temperature=_env("AI_TEMPERATURE", "0.7"),
-        ai_top_p=_env("AI_TOP_P", "0.9"),
+        ai_temperature=_env("AI_TEMPERATURE", "0.8"),
+        ai_top_p=_env("AI_TOP_P", "0.92"),
+        ai_repeat_penalty=_env("AI_REPEAT_PENALTY", "1.15"),
+        human_bubbles=_bool("HUMAN_BUBBLES", True),
+        human_reactions=_bool("HUMAN_REACTIONS", True),
+        vision_enabled=_bool("VISION_ENABLED", True),
         ai_max_tokens=_env("AI_MAX_TOKENS", "60"),
         ai_max_tokens_long=_env("AI_MAX_TOKENS_LONG", "500"),
-        ai_context_length=_env("AI_CONTEXT_LENGTH", "2048"),
+        ai_context_length=_env("AI_CONTEXT_LENGTH", "4096"),
         ai_num_threads=_env("AI_NUM_THREADS", "8"),
         ollama_keep_alive=_env("OLLAMA_KEEP_ALIVE", "30m"),
         ollama_timeout_seconds=_env("OLLAMA_TIMEOUT_SECONDS", "120"),
@@ -238,7 +246,7 @@ def load_settings(env_file: Optional[str] = None) -> Settings:
         mongo_db_name=_env("MONGO_DB_NAME", "ria_database"),
         mongo_max_pool_size=_env("MONGO_MAX_POOL_SIZE", "20"),
         history_messages=_env("HISTORY_MESSAGES", "8"),
-        history_char_budget=_env("HISTORY_CHAR_BUDGET", "3000"),
+        history_char_budget=_env("HISTORY_CHAR_BUDGET", "2400"),
         max_input_chars=_env("MAX_INPUT_CHARS", "2000"),
         conversation_retention_days=_env("CONVERSATION_RETENTION_DAYS", "0"),
         max_stored_messages_per_user=_env("MAX_STORED_MESSAGES_PER_USER", "50000"),
